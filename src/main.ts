@@ -107,8 +107,7 @@ import { audioFx } from './modules/audioEffects.ts';
 import { uploadReceiptToImageKit } from './modules/imagekit.ts';
 import { 
   renderProfileManagementModal, 
-  compressProfileImage, 
-  AVATAR_PRESETS 
+  compressProfileImage 
 } from './modules/profileManager.ts';
 import { unlockAudioEngine } from './modules/prayerAlerts.ts';
 
@@ -5574,6 +5573,17 @@ function attachEventHandlers() {
     });
   }
 
+  // Toggle Adhkar View Mode (Cards Deck vs List View)
+  const toggleAdhkarViewBtn = document.getElementById('btn-toggle-adhkar-view-mode');
+  if (toggleAdhkarViewBtn) {
+    toggleAdhkarViewBtn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      triggerHapticFeedback(12);
+      state.adhkarViewMode = state.adhkarViewMode === 'cards' ? 'list' : 'cards';
+      renderApp();
+    });
+  }
+
   // Adhkar category chips
   document.querySelectorAll('[data-cat-id]').forEach(chip => {
     chip.addEventListener('click', () => {
@@ -5581,6 +5591,7 @@ function attachEventHandlers() {
       if (catId) {
         audioFx.playAppleTap();
         state.activeAdhkarCategory = catId;
+        state.adhkarCardIndex = 0;
         renderApp();
       }
     });
@@ -6677,18 +6688,6 @@ function attachEventHandlers() {
       }
     });
   }
-
-  // Select Avatar Preset
-  document.querySelectorAll('.btn-select-avatar-preset').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const uri = (btn as HTMLElement).dataset.presetUri;
-      if (uri) {
-        audioFx.playAppleTap();
-        state.tempProfilePhoto = decodeURIComponent(uri);
-        renderApp();
-      }
-    });
-  });
 
   // Remove Profile Photo
   const removePhotoBtn = document.getElementById('btn-remove-profile-photo');
