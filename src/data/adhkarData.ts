@@ -4,6 +4,8 @@
  * لا يوجد أي اختراع أو زيادة في النصوص المأثورة
  */
 
+import { ICONS } from "../utils/icons";
+
 export interface DhikrItem {
   id: string;
   category: string;
@@ -15,31 +17,47 @@ export interface DhikrItem {
   benefit?: string;
 }
 
-export const ADHKAR_CATEGORIES = [
-  { id: "morning", name: "أذكار الصباح", icon: "☀️" },
-  { id: "evening", name: "أذكار المساء", icon: "🌙" },
-  { id: "sleep", name: "أذكار النوم", icon: "😴" },
-  { id: "wakeup", name: "أذكار الاستيقاظ", icon: "🌅" },
-  { id: "after_prayer", name: "أذكار بعد الصلاة", icon: "📿" },
-  { id: "prayer", name: "أذكار الصلاة", icon: "🕌" },
-  { id: "wudu", name: "أذكار الوضوء", icon: "💧" },
-  { id: "mosque", name: "أذكار المسجد", icon: "🏛️" },
-  { id: "enter_mosque", name: "أذكار دخول المسجد", icon: "🚪" },
-  { id: "exit_mosque", name: "أذكار الخروج من المسجد", icon: "🚶" },
-  { id: "enter_home", name: "أذكار دخول المنزل", icon: "🏡" },
-  { id: "exit_home", name: "أذكار الخروج من المنزل", icon: "👣" },
-  { id: "food", name: "أذكار الطعام", icon: "🍲" },
-  { id: "after_food", name: "أذكار بعد الطعام", icon: "🍽️" },
-  { id: "travel", name: "أذكار السفر", icon: "✈️" },
-  { id: "riding", name: "أذكار الركوب", icon: "🚗" },
-  { id: "distress", name: "أذكار الكرب", icon: "🤲" },
-  { id: "fear", name: "أذكار الخوف", icon: "🛡️" },
-  { id: "illness", name: "أذكار المرض", icon: "🩹" },
-  { id: "calamity", name: "أذكار المصائب", icon: "🌧️" },
-  { id: "istighfar", name: "أذكار الاستغفار", icon: "✨" },
-  { id: "prophet_prayer", name: "الصلاة على النبي ﷺ", icon: "💚" },
-  { id: "general", name: "أذكار متنوعة", icon: "📖" }
+export interface AdhkarCategoryMeta {
+  id: string;
+  name: string;
+  iconKey: keyof typeof ICONS | string;
+}
+
+export const ADHKAR_CATEGORIES: AdhkarCategoryMeta[] = [
+  { id: "morning", name: "أذكار الصباح", iconKey: "sunrise" },
+  { id: "evening", name: "أذكار المساء", iconKey: "sunset" },
+  { id: "sleep", name: "أذكار النوم", iconKey: "moonStars" },
+  { id: "wakeup", name: "أذكار الاستيقاظ", iconKey: "sun" },
+  { id: "after_prayer", name: "أذكار بعد الصلاة", iconKey: "tasbeeh" },
+  { id: "prayer", name: "أذكار الصلاة", iconKey: "mosque" },
+  { id: "wudu", name: "أذكار الوضوء", iconKey: "sparkles" },
+  { id: "mosque", name: "أذكار المسجد", iconKey: "mosque" },
+  { id: "enter_mosque", name: "أذكار دخول المسجد", iconKey: "mosque" },
+  { id: "exit_mosque", name: "أذكار الخروج من المسجد", iconKey: "mosque" },
+  { id: "enter_home", name: "أذكار دخول المنزل", iconKey: "home" },
+  { id: "exit_home", name: "أذكار الخروج من المنزل", iconKey: "arrowRight" },
+  { id: "food", name: "أذكار الطعام", iconKey: "bookOpen" },
+  { id: "after_food", name: "أذكار بعد الطعام", iconKey: "checkCircle" },
+  { id: "travel", name: "أذكار السفر", iconKey: "satellite" },
+  { id: "riding", name: "أذكار الركوب", iconKey: "mapPin" },
+  { id: "distress", name: "أذكار الكرب", iconKey: "duaHands" },
+  { id: "fear", name: "أذكار الخوف", iconKey: "shieldPeace" },
+  { id: "illness", name: "أذكار المرض", iconKey: "heartFaith" },
+  { id: "calamity", name: "أذكار المصائب", iconKey: "shield" },
+  { id: "istighfar", name: "أذكار الاستغفار", iconKey: "rotateCcw" },
+  { id: "prophet_prayer", name: "الصلاة على النبي ﷺ", iconKey: "islamicStar" },
+  { id: "general", name: "أذكار متنوعة", iconKey: "bookGuide" }
 ];
+
+export function getAdhkarCategoryIconSvg(categoryId: string, cls = "w-4 h-4"): string {
+  const cat = ADHKAR_CATEGORIES.find(c => c.id === categoryId);
+  const key = cat?.iconKey || "duaHands";
+  const iconFn = (ICONS as any)[key];
+  if (typeof iconFn === "function") {
+    return iconFn(cls);
+  }
+  return ICONS.duaHands(cls);
+}
 
 export const ALL_ADHKAR: DhikrItem[] = [
   // أذكار الصباح

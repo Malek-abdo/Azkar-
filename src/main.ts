@@ -8,20 +8,23 @@ import { SpringAnimation, VelocityTracker, appleRubberBand, projectMomentum, APP
 import { ICONS } from './utils/icons.ts';
 import { ABU_KABIR_VILLAGES, DEFAULT_LOCATION, LocationItem, POPULAR_LOCATIONS, EGYPT_GOVERNORATES } from './data/locationsData.ts';
 import { calculateOfflinePrayers, PrayerTimesResult } from './modules/prayerCalculation.ts';
-import { ALL_ADHKAR, ADHKAR_CATEGORIES, DhikrItem } from './data/adhkarData.ts';
+import { ALL_ADHKAR, ADHKAR_CATEGORIES, DhikrItem, getAdhkarCategoryIconSvg } from './data/adhkarData.ts';
 import { PRAYER_ADHKAR_LIST } from './data/prayerAdhkarData.ts';
 import { SURAH_LIST, loadSurahAyahs, AyahItem, SurahMeta } from './data/quranData.ts';
 import { ALL_KHUTBAHS, KHUTBAH_CATEGORIES, KHUTBAH_OFFICIAL_SOURCES, KhutbahItem } from './data/khutbahData.ts';
 import { PRAYER_GUIDE_STEPS, PrayerGuideStep } from './data/prayerGuideData.ts';
 import { FAITH_DATA } from './data/faithData.ts';
 import { FEAR_HOPE_CONTENT, MEDICAL_DISCLAIMER } from './data/fearHopeData.ts';
-import { loadTasbeehState, saveTasbeehState, TASBEEH_PRESETS, TARGET_PRESETS, playBeadSound, triggerHapticFeedback, TasbeehState } from './modules/tasbeeh.ts';
+import { loadTasbeehState, saveTasbeehState, TASBEEH_PRESETS, TARGET_PRESETS, playBeadSound, triggerHapticFeedback, TasbeehState, loadTasbeehStats, recordTasbeehIncrement, DhikrDailyStats } from './modules/tasbeeh.ts';
 import { 
   getSubscriptionStatus, 
   activateSubscription, 
   SubscriptionStatus, 
   resetToTrialForTesting, 
   expireTrialForTesting,
+  INSTAPAY_NUMBER,
+  INSTAPAY_LOCAL_NUMBER,
+  INSTAPAY_IPA,
   VODAFONE_CASH_NUMBER,
   VODAFONE_CASH_LOCAL_NUMBER,
   ADMIN_EMAIL,
@@ -54,10 +57,28 @@ import {
   MushafAyah, 
   SURAH_START_PAGE, 
   JUZ_NAMES, 
-  toArabicNumerals 
+  JUZ_LIST,
+  toArabicNumerals,
+  QURAN_RECITERS,
+  getAyahAudioUrl,
+  getAyahTafseer,
+  getAyahTranslation,
+  type QuranReciter,
+  type JuzMeta
 } from './modules/mushafService.ts';
+import { getLanguage, setLanguage, t, type AppLanguage } from './utils/i18n.ts';
+import { generateIslamicCard } from './utils/cardGenerator.ts';
+import { 
+  loadUserMemory, 
+  saveUserMemory, 
+  getUserStorageKey, 
+  type UserAccountMemory 
+} from './modules/accountMemory.ts';
 import { 
   loginWithGoogle, 
+  loginWithEmailPassword,
+  registerWithEmailPassword,
+  resetUserPassword,
   loginWithLocalSession,
   logoutUser, 
   subscribeToAuth, 
@@ -84,12 +105,21 @@ import {
 } from './modules/prayerAlerts.ts';
 import { audioFx } from './modules/audioEffects.ts';
 import { uploadReceiptToImageKit } from './modules/imagekit.ts';
+import { 
+  renderProfileManagementModal, 
+  compressProfileImage, 
+  AVATAR_PRESETS 
+} from './modules/profileManager.ts';
+import { unlockAudioEngine } from './modules/prayerAlerts.ts';
 
 // State Management
 interface AppState {
   currentUser: CustomAppUser | null;
   isAuthLoading: boolean;
   isSigningIn: boolean;
+  authTab: 'login' | 'register' | 'forgot';
+  showPasswordToggle: boolean;
+  authSuccessMessage: string | null;
   authError: string | null;
   authErrorCode: string | null;
   currentTab: 'home' | 'quran' | 'adhkar' | 'tasbeeh' | 'more';
@@ -101,7 +131,7 @@ interface AppState {
   selectedLocation: LocationItem;
   theme: 'light' | 'dark';
   quranFontSize: number;
-  quranMode: 'mushaf' | 'surahs' | 'embed';
+  quranMode: 'mushaf' | 'surahs' | 'juz' | 'embed';
   mushafPageNumber: number;
   mushafPageData: MushafPageData | null;
   isLoadingMushafPage: boolean;
@@ -109,6 +139,9 @@ interface AppState {
   prayerTimes: PrayerTimesResult;
   prayerAlertsSettings: PrayerAlertsSettings;
   showPrayerAlertModal: boolean;
+  showProfileModal: boolean;
+  tempProfilePhoto: string | null;
+  tempProfileName: string | null;
   activeAzanAlert: AlertTriggerInfo | null;
   testingMuadhinId: string | null;
   isAzanPlaying: boolean;
@@ -119,16 +152,32 @@ interface AppState {
   showSearchModal: boolean;
   showLocationModal: boolean;
   showPaywallModal: boolean;
-  compassHeading: number | null;
-  compassPitch: number;
-  compassRoll: number;
-  compassIsLevel: boolean;
-  compassSoundEnabled: boolean;
-  compassPermissionGranted: boolean;
   receiptUploadPreview: string | null;
   viewingReceiptImage: string | null;
   adminUserSearch: string;
   paywallStep: number;
+  isFocusMode: boolean;
+  kidsMode: boolean;
+  homeFilterTab: 'today' | 'adhkar_tasbeeh' | 'sciences' | 'all' | 'quran_dhikr';
+  adhkarCardIndex: number;
+  adhkarViewMode: 'cards' | 'list';
+  prayerGuideStepIndex: number;
+  prayerAdhkarStepIndex: number;
+  faithCardIndex: number;
+  fearHopeCardIndex: number;
+  homeDhikrCardIndex: number;
+  showStatsModal: boolean;
+  surahSearchQuery: string;
+  surahFilterType: 'all' | 'Meccan' | 'Medinan';
+  language: AppLanguage;
+  selectedReciterId: string;
+  isAyahAudioPlaying: boolean;
+  playingAyahNumber: number | null;
+  selectedAyahTafseer: string | null;
+  selectedAyahTranslation: string | null;
+  activeAyahModalTab: 'audio' | 'tafseer' | 'translation';
+  isLoadingAyahDetails: boolean;
+  cardPreviewModal: { title: string; text: string; source?: string; imageUrl: string } | null;
 }
 
 const STORAGE_LOCATION_KEY = 'zad_user_location';
@@ -136,6 +185,7 @@ const STORAGE_THEME_KEY = 'zad_app_theme';
 const STORAGE_FONT_SIZE_KEY = 'zad_quran_font_size';
 const STORAGE_DHIKR_PROGRESS = 'zad_dhikr_progress';
 const STORAGE_COMPASS_SOUND = 'zad_compass_sound';
+const STORAGE_KIDS_MODE = 'zad_kids_mode';
 
 function loadInitialLocation(): LocationItem {
   const saved = localStorage.getItem(STORAGE_LOCATION_KEY);
@@ -159,6 +209,9 @@ const state: AppState = {
   currentUser: null,
   isAuthLoading: true,
   isSigningIn: false,
+  authTab: 'login',
+  showPasswordToggle: false,
+  authSuccessMessage: null,
   authError: null,
   authErrorCode: null,
   currentTab: 'home',
@@ -178,6 +231,9 @@ const state: AppState = {
   prayerTimes: calculateOfflinePrayers(loadInitialLocation().latitude, loadInitialLocation().longitude),
   prayerAlertsSettings: loadPrayerAlertsSettings(),
   showPrayerAlertModal: false,
+  showProfileModal: false,
+  tempProfilePhoto: null,
+  tempProfileName: null,
   activeAzanAlert: null,
   testingMuadhinId: null,
   isAzanPlaying: false,
@@ -188,16 +244,32 @@ const state: AppState = {
   showSearchModal: false,
   showLocationModal: false,
   showPaywallModal: false,
-  compassHeading: null,
-  compassPitch: 0,
-  compassRoll: 0,
-  compassIsLevel: true,
-  compassSoundEnabled: localStorage.getItem(STORAGE_COMPASS_SOUND) !== 'false',
-  compassPermissionGranted: false,
   receiptUploadPreview: null,
   viewingReceiptImage: null,
   adminUserSearch: '',
-  paywallStep: 1
+  paywallStep: 1,
+  isFocusMode: false,
+  kidsMode: localStorage.getItem(STORAGE_KIDS_MODE) === 'true',
+  homeFilterTab: 'today',
+  adhkarCardIndex: 0,
+  adhkarViewMode: 'cards',
+  prayerGuideStepIndex: 0,
+  prayerAdhkarStepIndex: 0,
+  faithCardIndex: 0,
+  fearHopeCardIndex: 0,
+  homeDhikrCardIndex: 0,
+  showStatsModal: false,
+  surahSearchQuery: '',
+  surahFilterType: 'all',
+  language: getLanguage(),
+  selectedReciterId: localStorage.getItem('zad_selected_reciter') || 'alafasy',
+  isAyahAudioPlaying: false,
+  playingAyahNumber: null,
+  selectedAyahTafseer: null,
+  selectedAyahTranslation: null,
+  activeAyahModalTab: 'audio',
+  isLoadingAyahDetails: false,
+  cardPreviewModal: null
 };
 
 const PRIMARY_DEV_HOST = 'ais-dev-6dnwiwndtae57cpw3n524i-64176840431.europe-west2.run.app';
@@ -250,10 +322,84 @@ export function handlePostLoginRedirect(user: CustomAppUser) {
 
 checkUrlAuthPayload();
 
-// Listen to Firebase Auth state change
+// Global Ayah Audio Player Reference
+let currentAyahAudio: HTMLAudioElement | null = null;
+
+// Apply and Restore User Account Memory on Login / State change
+export function applyUserAccountMemory(user: CustomAppUser | null) {
+  if (!user) return;
+  const key = getUserStorageKey(user);
+  const mem = loadUserMemory(key);
+  if (mem) {
+    if (mem.tasbeeh) state.tasbeeh = mem.tasbeeh;
+    if (mem.dhikrProgress) state.dhikrProgress = mem.dhikrProgress;
+    if (mem.selectedLocation) {
+      state.selectedLocation = mem.selectedLocation;
+      state.prayerTimes = calculateOfflinePrayers(mem.selectedLocation.latitude, mem.selectedLocation.longitude);
+    }
+    if (mem.prayerAlertsSettings) state.prayerAlertsSettings = mem.prayerAlertsSettings;
+    if (typeof mem.mushafPageNumber === 'number') state.mushafPageNumber = mem.mushafPageNumber;
+    if (typeof mem.quranFontSize === 'number') state.quranFontSize = mem.quranFontSize;
+    if (mem.theme) {
+      state.theme = mem.theme;
+      document.documentElement.setAttribute('data-theme', state.theme);
+    }
+    if (typeof mem.kidsMode === 'boolean') state.kidsMode = mem.kidsMode;
+    if (typeof mem.homeDhikrCardIndex === 'number') state.homeDhikrCardIndex = mem.homeDhikrCardIndex;
+    if (typeof mem.adhkarCardIndex === 'number') state.adhkarCardIndex = mem.adhkarCardIndex;
+    if (typeof mem.prayerGuideStepIndex === 'number') state.prayerGuideStepIndex = mem.prayerGuideStepIndex;
+    if (typeof mem.prayerAdhkarStepIndex === 'number') state.prayerAdhkarStepIndex = mem.prayerAdhkarStepIndex;
+    if (typeof mem.faithCardIndex === 'number') state.faithCardIndex = mem.faithCardIndex;
+    if (typeof mem.fearHopeCardIndex === 'number') state.fearHopeCardIndex = mem.fearHopeCardIndex;
+  }
+}
+
+// Seamlessly sync account data in background
+export function syncCurrentAccountMemory() {
+  if (!state.currentUser) return;
+  const key = getUserStorageKey(state.currentUser);
+  saveUserMemory(key, {
+    tasbeeh: state.tasbeeh,
+    dhikrProgress: state.dhikrProgress,
+    selectedLocation: state.selectedLocation,
+    prayerAlertsSettings: state.prayerAlertsSettings,
+    mushafPageNumber: state.mushafPageNumber,
+    quranFontSize: state.quranFontSize,
+    theme: state.theme,
+    kidsMode: state.kidsMode,
+    homeDhikrCardIndex: state.homeDhikrCardIndex,
+    adhkarCardIndex: state.adhkarCardIndex,
+    prayerGuideStepIndex: state.prayerGuideStepIndex,
+    prayerAdhkarStepIndex: state.prayerAdhkarStepIndex,
+    faithCardIndex: state.faithCardIndex,
+    fearHopeCardIndex: state.fearHopeCardIndex
+  });
+}
+
+// Listen to Auth state change with seamless Guest Mode support
 subscribeToAuth((user) => {
   if (user) {
     state.currentUser = user;
+    applyUserAccountMemory(user);
+  } else if (!state.currentUser) {
+    const savedLocal = localStorage.getItem('zad_local_authenticated_user');
+    if (savedLocal) {
+      try {
+        state.currentUser = JSON.parse(savedLocal);
+        applyUserAccountMemory(state.currentUser);
+      } catch {
+        // ignore
+      }
+    } else if (localStorage.getItem('zad_guest_mode') === 'true') {
+      state.currentUser = {
+        uid: 'guest_user',
+        email: 'guest@azkar.app',
+        displayName: 'زائر كريم',
+        photoURL: null,
+        isGuest: true
+      };
+      applyUserAccountMemory(state.currentUser);
+    }
   }
   state.isAuthLoading = false;
   state.isSigningIn = false;
@@ -297,15 +443,6 @@ if (typeof window !== 'undefined') {
 
 // View navigation helper (مع انتقال Apple السلس والصوت التفاعلي الفاخر)
 export function navigateTo(tab: AppState['currentTab'], subView: string | null = null) {
-  // Check subscription paywall
-  const subStatus = getSubscriptionStatus();
-  if (subStatus.isExpired && tab !== 'more') {
-    state.showPaywallModal = true;
-    audioFx.playAppleSheetOpen();
-    renderApp();
-    return;
-  }
-
   // Play Apple transition sound & light tactile haptic
   audioFx.playAppleTransition();
   triggerHapticFeedback(12);
@@ -316,19 +453,72 @@ export function navigateTo(tab: AppState['currentTab'], subView: string | null =
   renderApp();
 }
 
+// Helper to render clean standard profile avatar (صورة بروفايل عادية واحترافية)
+function renderUserProfileAvatar(
+  user: { displayName?: string | null; email?: string | null; photoURL?: string | null } | null,
+  sizeCls = "w-11 h-11",
+  iconCls = "w-6 h-6"
+): string {
+  const photo = user?.photoURL;
+  const isCustom = photo && 
+    typeof photo === 'string' &&
+    photo.length > 5 &&
+    !photo.includes('app_logo') && 
+    !photo.includes('islamic_app_icon') && 
+    !photo.includes('islamic_minimal_icon');
+
+  if (isCustom) {
+    return `
+      <div class="${sizeCls} rounded-full overflow-hidden border border-subtle bg-surface-subtle shrink-0 shadow-xs relative">
+        <img 
+          src="${photo}" 
+          alt="${user?.displayName || 'User'}" 
+          class="w-full h-full object-cover" 
+          onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" 
+        />
+        <div class="w-full h-full hidden items-center justify-center bg-gradient-to-br from-surface-subtle to-surface text-muted">
+          <svg class="${iconCls} text-secondary/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+      </div>
+    `;
+  }
+
+  // Standard clean profile picture (صورة بروفايل عادية بمظهر احترافي ناعم)
+  return `
+    <div class="${sizeCls} rounded-full overflow-hidden border border-subtle bg-gradient-to-br from-surface-subtle via-surface to-surface-subtle flex items-center justify-center text-muted shrink-0 shadow-xs select-none">
+      <svg class="${iconCls} text-secondary/75" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+        <circle cx="12" cy="7" r="4"/>
+      </svg>
+    </div>
+  `;
+}
+
 // Render Master Shell
 export function renderApp() {
   const root = document.getElementById('app');
   if (!root) return;
+
+  // Preserve bottom navigation horizontal scroll position
+  const prevNav = document.querySelector('.bottom-nav');
+  const prevScrollLeft = prevNav ? prevNav.scrollLeft : null;
 
   // 1. If auth is loading, render Splash / Loading state
   if (state.isAuthLoading) {
     root.innerHTML = `
       <div class="min-h-screen bg-canvas text-body flex flex-col items-center justify-center p-6 text-center select-none font-cairo">
         <div class="space-y-4 max-w-xs">
-          <div class="relative w-24 h-24 mx-auto">
-            <img src="/images/app_logo.jpg" alt="Logo" class="w-24 h-24 rounded-3xl object-cover border-2 border-gold shadow-xl" />
-          </div>
+            <div class="relative w-24 h-24 mx-auto">
+              <div class="w-24 h-24 rounded-3xl p-1 bg-gradient-to-tr from-emerald-800 via-emerald-600 to-amber-500 shadow-2xl flex items-center justify-center">
+                <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[20px] object-cover" />
+              </div>
+              <div class="absolute -bottom-2 -right-2 w-7 h-7 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center shadow-lg text-xs font-black">
+                ۞
+              </div>
+            </div>
           <h1 class="text-xl font-bold text-primary">اذكار ، Ankara</h1>
           <p class="text-xs text-muted">«رفيقك اليومي للقرآن والذكر والعبادة»</p>
           <div class="pt-4 flex items-center justify-center gap-2 text-primary text-xs font-semibold">
@@ -379,59 +569,90 @@ export function renderApp() {
   const isAdmin = isAdminUser(state.currentUser.email);
 
   root.innerHTML = `
-    <!-- Top Header -->
-    <header class="top-header px-3 sm:px-4 py-2.5 flex items-center justify-between shadow-xs gap-2">
-      <!-- Right Side (RTL Start): App Logo & Clean Brand Title -->
-      <div class="flex items-center gap-2 cursor-pointer select-none min-w-0" id="header-brand">
-        <img src="/images/app_logo.jpg" alt="Logo" class="w-9 h-9 rounded-xl object-cover border border-gold/40 shadow-xs shrink-0" />
-        <div class="text-right min-w-0">
-          <h1 class="text-sm sm:text-base font-black tracking-tight text-primary flex items-center gap-1 leading-tight truncate">
-            <span>اذكار ، Ankara</span>
-            <span class="text-gold shrink-0">${ICONS.sparkles('w-3 h-3')}</span>
-          </h1>
-          <p class="text-[10px] text-muted leading-tight truncate hidden xs:block">رفيقك اليومي للقرآن والذكر والعبادة</p>
-        </div>
+    <!-- Focus Mode Floating Exit Button -->
+    ${state.isFocusMode ? `
+      <div class="fixed top-3 right-3 z-50">
+        <button id="btn-exit-focus-mode" class="px-4 py-2 rounded-full bg-paper text-obsidian border border-hairline text-xs font-medium shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all">
+          ${ICONS.close('w-3.5 h-3.5')}
+          <span>الخروج من وضع الخشوع</span>
+        </button>
       </div>
+    ` : `
+      <!-- Top Header (Clean Islamic Minimalism) -->
+      <header class="top-header px-3.5 sm:px-4 py-2.5 flex items-center justify-between gap-3 border-b border-subtle bg-surface/90 backdrop-blur-xl sticky top-0 z-40">
+        <!-- Right: App Logo & Brand -->
+        <div class="flex items-center gap-2.5 cursor-pointer select-none min-w-0" id="header-brand">
+          <div class="w-9 h-9 rounded-xl p-0.5 bg-gradient-to-tr from-emerald-800 via-emerald-600 to-amber-400 shadow-sm flex items-center justify-center shrink-0">
+            <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[10px] object-cover" />
+          </div>
+          <div class="text-right min-w-0">
+            <h1 class="text-sm sm:text-base font-bold text-primary flex items-center gap-1.5 leading-tight truncate">
+              <span>اذكار ، Ankara</span>
+              <span class="text-gold text-xs">۞</span>
+            </h1>
+            <p class="text-[11px] text-gold-dark dark:text-gold leading-tight truncate">رفيقك اليومي للذكر والعبادة</p>
+          </div>
+        </div>
 
-      <!-- Left Side (RTL End): Action Icons with consistent touch targets -->
-      <div class="flex items-center gap-1.5 shrink-0">
-        ${isAdmin ? `
-          <button id="btn-header-admin" class="w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-r from-amber-500 to-gold text-slate-950 shadow-sm hover:brightness-105 transition-all cursor-pointer shrink-0" title="لوحة تحكم المسؤول">
-            ${ICONS.crown('w-4.5 h-4.5 text-slate-950')}
+        <!-- Left: Streamlined, Functional Actions -->
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button 
+            id="btn-open-search" 
+            class="w-9 h-9 rounded-xl bg-surface-subtle hover:bg-surface border border-subtle flex items-center justify-center text-secondary hover:text-primary transition-all cursor-pointer active:scale-95 shadow-xs" 
+            title="بحث شامل في الأذكار والسور"
+          >
+            ${ICONS.search('w-4 h-4')}
           </button>
-        ` : ''}
-        <button id="btn-open-favorites" class="w-9 h-9 rounded-xl flex items-center justify-center border border-subtle hover:bg-surface-subtle transition-colors text-gold cursor-pointer shrink-0" title="المفضلة">
-          ${ICONS.star('w-4 h-4', true)}
-        </button>
-        <button id="btn-open-search" class="w-9 h-9 rounded-xl flex items-center justify-center border border-subtle hover:bg-surface-subtle text-secondary transition-colors cursor-pointer shrink-0" title="بحث شامل">
-          ${ICONS.search('w-4 h-4')}
-        </button>
-        <button id="btn-toggle-theme" class="w-9 h-9 rounded-xl flex items-center justify-center border border-subtle hover:bg-surface-subtle text-secondary transition-colors cursor-pointer shrink-0" title="الوضع الليلي">
-          ${state.theme === 'dark' ? ICONS.sun('w-4 h-4 text-gold') : ICONS.moon('w-4 h-4 text-secondary')}
-        </button>
-      </div>
-    </header>
 
-    <!-- Trial Banner (if in 3-day trial) -->
-    ${subStatus.isTrial && !isAdmin ? `
-      <div class="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
-        <div class="flex items-center gap-1.5 font-medium text-[11px]">
-          ${ICONS.clock('w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0')}
-          <span>فترة تجريبية مجانية: متبقي <strong class="font-bold">${subStatus.daysRemaining} يوم</strong> و ${subStatus.hoursRemaining} س</span>
+          <button 
+            id="btn-toggle-theme" 
+            class="w-9 h-9 rounded-xl bg-surface-subtle hover:bg-surface border border-subtle flex items-center justify-center text-secondary hover:text-primary transition-all cursor-pointer active:scale-95 shadow-xs" 
+            title="تبديل الوضع الليلي / النهاري"
+          >
+            ${state.theme === 'dark' ? ICONS.sun('w-4 h-4 text-gold') : ICONS.moon('w-4 h-4 text-primary')}
+          </button>
+
+          <button 
+            id="btn-open-location" 
+            class="px-2.5 py-1.5 rounded-xl bg-surface-subtle hover:bg-surface border border-subtle text-xs font-bold text-primary flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-xs" 
+            title="تحديد وتغيير الموقع"
+          >
+            ${ICONS.mapPin('w-3.5 h-3.5 text-gold-dark dark:text-gold')}
+            <span class="max-w-[70px] truncate text-[11px]">${state.selectedLocation.village || state.selectedLocation.city.replace('مركز ', '')}</span>
+          </button>
+
+          <!-- User Profile Avatar in Header -->
+          <button 
+            id="btn-header-profile" 
+            class="w-9 h-9 rounded-xl overflow-hidden border border-gold/40 bg-surface-subtle hover:border-gold p-0.5 flex items-center justify-center transition-all cursor-pointer active:scale-95 shadow-xs" 
+            title="الملف الشخصي وإدارة الصورة"
+          >
+            ${renderUserProfileAvatar(state.currentUser, 'w-full h-full', 'w-4 h-4')}
+          </button>
         </div>
-        <button id="btn-upgrade-banner" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg text-[11px] font-bold shadow-xs transition-colors cursor-pointer">
-          فودافون كاش
-        </button>
-      </div>
-    ` : ''}
+      </header>
+
+      <!-- Trial Banner (if in 3-day trial) -->
+      ${subStatus.isTrial && !isAdmin ? `
+        <div class="bg-gradient-to-r from-emerald-900/10 to-gold/10 border-b border-gold/30 px-4 py-2 flex items-center justify-between text-xs text-primary">
+          <div class="flex items-center gap-1.5 font-bold text-[11px]">
+            ${ICONS.clock('w-3.5 h-3.5 text-gold-dark dark:text-gold shrink-0')}
+            <span>فترة تجريبية مجانية: متبقي <strong class="text-gold-dark dark:text-gold">${subStatus.daysRemaining} يوم</strong> و ${subStatus.hoursRemaining} س</span>
+          </div>
+          <button id="btn-upgrade-banner" class="px-3 py-1 bg-gradient-to-r from-amber-500 to-gold text-slate-950 text-[11px] font-black rounded-lg shadow-xs cursor-pointer hover:brightness-105 active:scale-95 transition-all">
+            ترقية الحساب
+          </button>
+        </div>
+      ` : ''}
+    `}
 
     <!-- Main Content Area with Apple Fluid View Transition -->
-    <main class="flex-1 apple-view-transition ${state.currentTab === 'quran' ? 'px-1 py-1' : 'px-4 py-4'} max-w-lg mx-auto w-full">
+    <main class="flex-1 apple-view-transition ${state.isFocusMode ? 'px-2 py-4' : (state.currentTab === 'quran' ? 'px-1 py-1' : 'px-3.5 sm:px-4 py-3.5')} w-full">
       ${renderActiveView()}
     </main>
 
     <!-- Bottom Footer Dedication (صناع التطبيق) -->
-    ${state.currentTab !== 'quran' ? `
+    ${(!state.isFocusMode && state.currentTab !== 'quran') ? `
     <footer class="mt-8 mb-4 px-4 text-center">
       <div class="border-t border-subtle pt-4 text-xs text-muted leading-relaxed space-y-1">
         <p class="font-semibold text-secondary">«اذكار ، Ankara» — رفيقك اليومي للقرآن والذكر والعبادة</p>
@@ -442,64 +663,115 @@ export function renderApp() {
     </footer>
     ` : ''}
 
-    <!-- Bottom Navigation Bar with Horizontal Touch Scroll & All App Sections -->
-    <nav class="bottom-nav">
-      <button class="nav-item apple-spring-press ${state.currentTab === 'home' && !state.subView ? 'active' : ''}" data-nav="home">
-        <span class="nav-icon-container">${ICONS.home('w-5 h-5')}</span>
-        <span>الرئيسية</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.currentTab === 'quran' ? 'active' : ''}" data-nav="quran">
-        <span class="nav-icon-container">${ICONS.quran('w-5 h-5')}</span>
-        <span>القرآن</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.currentTab === 'adhkar' ? 'active' : ''}" data-nav="adhkar">
-        <span class="nav-icon-container">${ICONS.duaHands('w-5 h-5')}</span>
-        <span>الأذكار</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.currentTab === 'tasbeeh' ? 'active' : ''}" data-nav="tasbeeh">
-        <span class="nav-icon-container">${ICONS.tasbeeh('w-5 h-5')}</span>
-        <span>المسبحة</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.subView === 'prayer_adhkar' ? 'active' : ''}" data-subview="prayer_adhkar">
-        <span class="nav-icon-container">${ICONS.mosque('w-5 h-5')}</span>
-        <span>أذكار الصلاة</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.subView === 'prayer_times' ? 'active' : ''}" data-subview="prayer_times">
-        <span class="nav-icon-container">${ICONS.clock('w-5 h-5')}</span>
-        <span>المواقيت</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.subView === 'prayer_guide' ? 'active' : ''}" data-subview="prayer_guide">
-        <span class="nav-icon-container">${ICONS.bookGuide('w-5 h-5')}</span>
-        <span>تعليم الصلاة</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.subView === 'khutbahs' ? 'active' : ''}" data-subview="khutbahs">
-        <span class="nav-icon-container">${ICONS.speakerKhutbah('w-5 h-5')}</span>
-        <span>الخطب</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.subView === 'faith' ? 'active' : ''}" data-subview="faith">
-        <span class="nav-icon-container">${ICONS.heartFaith('w-5 h-5')}</span>
-        <span>الإيمان</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.subView === 'fear_hope' ? 'active' : ''}" data-subview="fear_hope">
-        <span class="nav-icon-container">${ICONS.shieldPeace('w-5 h-5')}</span>
-        <span>الخوف والرجاء</span>
-      </button>
-      <button class="nav-item apple-spring-press ${state.currentTab === 'more' ? 'active' : ''}" data-nav="more">
-        <span class="nav-icon-container">${ICONS.settings('w-5 h-5')}</span>
-        <span>المزيد</span>
-      </button>
-    </nav>
+    <!-- Bottom Navigation Bar with Apple Glassmorphism & Horizontal Touch Scrolling (جميع الأقسام) -->
+    ${!state.isFocusMode ? `
+      <nav class="bottom-nav">
+        <!-- 1. الرئيسية -->
+        <button class="nav-item apple-spring-press ${state.currentTab === 'home' && !state.subView ? 'active' : ''}" data-nav="home">
+          <span class="nav-icon-container">${ICONS.home('w-5 h-5')}</span>
+          <span>الرئيسية</span>
+        </button>
+
+        <!-- 2. الأذكار -->
+        <button class="nav-item apple-spring-press ${state.currentTab === 'adhkar' && !state.subView ? 'active' : ''}" data-nav="adhkar">
+          <span class="nav-icon-container">${ICONS.duaHands('w-5 h-5')}</span>
+          <span>الأذكار</span>
+        </button>
+
+        <!-- 3. المسبحة -->
+        <button class="nav-item apple-spring-press ${state.currentTab === 'tasbeeh' && !state.subView ? 'active' : ''}" data-nav="tasbeeh">
+          <span class="nav-icon-container">${ICONS.tasbeeh('w-5 h-5')}</span>
+          <span>المسبحة</span>
+        </button>
+
+        <!-- 4. أذكار الصلاة -->
+        <button class="nav-item apple-spring-press ${state.subView === 'prayer_adhkar' ? 'active' : ''}" data-subview="prayer_adhkar">
+          <span class="nav-icon-container">${ICONS.mosque('w-5 h-5')}</span>
+          <span>أذكار الصلاة</span>
+        </button>
+
+        <!-- 5. مواقيت الصلاة -->
+        <button class="nav-item apple-spring-press ${state.subView === 'prayer_times' ? 'active' : ''}" data-subview="prayer_times">
+          <span class="nav-icon-container">${ICONS.clock('w-5 h-5')}</span>
+          <span>المواقيت</span>
+        </button>
+
+        <!-- 6. صفة الصلاة -->
+        <button class="nav-item apple-spring-press ${state.subView === 'prayer_guide' ? 'active' : ''}" data-subview="prayer_guide">
+          <span class="nav-icon-container">${ICONS.bookGuide('w-5 h-5')}</span>
+          <span>صفة الصلاة</span>
+        </button>
+
+        <!-- 7. الخطب والدروس -->
+        <button class="nav-item apple-spring-press ${state.subView === 'khutbahs' ? 'active' : ''}" data-subview="khutbahs">
+          <span class="nav-icon-container">${ICONS.speakerKhutbah('w-5 h-5')}</span>
+          <span>الخطب</span>
+        </button>
+
+        <!-- 8. ركائز الإيمان -->
+        <button class="nav-item apple-spring-press ${state.subView === 'faith' ? 'active' : ''}" data-subview="faith">
+          <span class="nav-icon-container">${ICONS.heartFaith('w-5 h-5')}</span>
+          <span>الإيمان</span>
+        </button>
+
+        <!-- 9. الخوف والرجاء -->
+        <button class="nav-item apple-spring-press ${state.subView === 'fear_hope' ? 'active' : ''}" data-subview="fear_hope">
+          <span class="nav-icon-container">${ICONS.shieldPeace('w-5 h-5')}</span>
+          <span>الخوف والرجاء</span>
+        </button>
+
+        <!-- 10. المفضلة -->
+        <button class="nav-item apple-spring-press ${state.subView === 'favorites' ? 'active' : ''}" data-subview="favorites">
+          <span class="nav-icon-container">${ICONS.star('w-5 h-5')}</span>
+          <span>المفضلة</span>
+        </button>
+
+        <!-- 11. باقة الاشتراك InstaPay -->
+        <button class="nav-item apple-spring-press ${state.subView === 'subscription' ? 'active' : ''}" data-subview="subscription">
+          <span class="nav-icon-container">${ICONS.instapay('w-5 h-5')}</span>
+          <span>الاشتراك</span>
+        </button>
+
+        <!-- 12. الإعدادات -->
+        <button class="nav-item apple-spring-press ${state.currentTab === 'more' && !state.subView ? 'active' : ''}" data-nav="more">
+          <span class="nav-icon-container">${ICONS.settings('w-5 h-5')}</span>
+          <span>الإعدادات</span>
+        </button>
+      </nav>
+    ` : ''}
 
     <!-- Modals -->
     ${state.showSearchModal ? renderSearchModal() : ''}
     ${state.showLocationModal ? renderLocationModal() : ''}
     ${state.showPaywallModal ? renderPaywallModal() : ''}
+    ${state.showStatsModal ? renderStatsModal() : ''}
     ${state.viewingReceiptImage ? renderReceiptImageModal() : ''}
     ${state.showPrayerAlertModal ? renderPrayerAlertSettingsModal() : ''}
+    ${state.showProfileModal ? renderProfileManagementModal(state.currentUser, state.tempProfilePhoto) : ''}
     ${(state.activeAzanAlert || state.isAzanPlaying) ? renderActiveAzanDialog() : ''}
+    ${state.cardPreviewModal ? renderCardPreviewModal() : ''}
   `;
 
   attachEventHandlers();
+
+  // Restore bottom navigation horizontal scroll position smoothly without snapping back to 0
+  if (prevScrollLeft !== null) {
+    const newNav = document.querySelector('.bottom-nav') as HTMLElement;
+    if (newNav) {
+      newNav.scrollLeft = prevScrollLeft;
+      const activeItem = newNav.querySelector('.nav-item.active') as HTMLElement;
+      if (activeItem) {
+        const navRect = newNav.getBoundingClientRect();
+        const itemRect = activeItem.getBoundingClientRect();
+        if (itemRect.left < navRect.left || itemRect.right > navRect.right) {
+          activeItem.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }
+      }
+    }
+  }
+
+  // Seamlessly sync account data in background
+  syncCurrentAccountMemory();
 }
 
 function renderActiveView(): string {
@@ -519,6 +791,10 @@ function renderActiveView(): string {
     }
   }
 
+  if (state.kidsMode && state.currentTab === 'home') {
+    return renderKidsModeView();
+  }
+
   switch (state.currentTab) {
     case 'home': return renderHomeView();
     case 'quran': return renderQuranView();
@@ -529,394 +805,326 @@ function renderActiveView(): string {
   }
 }
 
+const HOME_DAILY_ADHKAR = [
+  { text: "«سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، عَدَدَ خَلْقِهِ، وَرِضَا نَفْسِهِ، وَزِنَةَ عَرْشِهِ، وَمِدَادَ كَلِمَاتِهِ»", count: 3, source: "صحيح مسلم", title: "ذكر الصباح والبركة" },
+  { text: "«اللَّهُمَّ أَنْتَ رَبِّي لاَ إِلَهَ إِلَّا أَنْتَ، خَلَقْتَنِي وَأَنَا عَبْدُكَ، وَأَنَا عَلَى عَهْدِكَ وَوَعْدِكَ مَا اسْتَطَعْتُ، أَعُوذُ بِكَ مِنْ شَرِّ مَا صَنَعْتُ، أَبُوءُ لَكَ بِنِعْمَتِكَ عَلَيَّ، وَأَبُوءُ لَكَ بِذَنْبِي فَاغْفِرْ لِي فَإِنَّهُ لاَ يَغْفِرُ الذُّنُوبَ إِلَّا أَنْتَ»", count: 1, source: "صحيح البخاري", title: "سيد الاستغفار" },
+  { text: "«أَصْبَحْنَا وَأَصْبَحَ الْمُلْكُ لِلَّهِ، وَالْحَمْدُ لِلَّهِ لاَ إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لاَ شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ»", count: 1, source: "صحيح مسلم", title: "استفتاح اليوم المبارك" },
+  { text: "«يَا حَيُّ يَا قَيُّومُ بِرَحْمَتِكَ أَسْتَغِيثُ، أَصْلِحْ لِي شَأْنِي كُلَّهُ، وَلاَ تَكِلْنِي إِلَى نَفْسِي طَرْفَةَ عَيْنٍ»", count: 1, source: "صحيح الترغيب", title: "دعاء الاستغاثة والسكينة" },
+  { text: "«لاَ حَوْلَ وَلاَ قُوَّةَ إِلَّا بِاللَّهِ الْعَلِيِّ الْعَظِيمِ»", count: 10, source: "صحيح البخاري", title: "كنز من كنوز الجنة" }
+];
+
 // 1. Home View
 function renderHomeView(): string {
   const p = state.prayerTimes;
   const alertSettings = state.prayerAlertsSettings;
 
+  const totalDaily = HOME_DAILY_ADHKAR.length;
+  const activeDailyIdx = Math.min(Math.max(0, state.homeDhikrCardIndex), totalDaily - 1);
+  state.homeDhikrCardIndex = activeDailyIdx;
+  const currentDailyDhikr = HOME_DAILY_ADHKAR[activeDailyIdx];
+
   return `
     <div class="space-y-4">
       <!-- Islamic Date & Luxury Prayer Times Hero Card -->
-      <div class="prayer-hero-card p-4 sm:p-5 text-white">
-        <div class="relative z-10 flex flex-col justify-between">
-          <!-- Top Row: Hijri Date, Prayer Alerts Button & Location Selector -->
-          <div class="flex items-center justify-between text-xs text-white/90">
-            <div class="flex items-center gap-1.5 font-medium">
-              ${ICONS.calendar('w-4 h-4 text-gold')}
+      <div class="prayer-hero-card p-4.5 sm:p-5">
+        <div class="flex flex-col justify-between space-y-3.5">
+          <!-- Top Row: Hijri Date & Quick Controls -->
+          <div class="flex items-center justify-between text-xs">
+            <div class="flex items-center gap-1.5 font-bold text-gold-light bg-black/25 backdrop-blur-md px-3 py-1 rounded-full border border-gold/30 shadow-xs">
+              ${ICONS.calendar('w-3.5 h-3.5 text-gold')}
               <span>${p.hijriDate}</span>
             </div>
             
             <div class="flex items-center gap-1.5">
-              <button id="btn-open-prayer-alerts" class="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-gold text-slate-950 hover:brightness-110 border border-gold/70 px-3 py-1 rounded-full text-xs font-black transition-all active:scale-95 cursor-pointer shadow-sm" title="إعدادات صوت الأذان وتغيير المؤذن">
-                ${ICONS.mic('w-3.5 h-3.5 text-slate-950')}
-                <span>تغيير المؤذن</span>
+              <button 
+                id="btn-open-prayer-alerts" 
+                class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/25 hover:bg-black/40 border border-gold/30 text-xs font-bold text-white transition-all cursor-pointer active:scale-95 shadow-xs" 
+                title="إعدادات صوت الأذان واختيار المؤذن"
+              >
+                ${ICONS.mic('w-3.5 h-3.5 text-gold')}
+                <span>المؤذن</span>
               </button>
-              <button id="btn-hero-location" class="flex items-center gap-1.5 bg-black/25 hover:bg-black/40 border border-white/20 px-3 py-1 rounded-full text-xs font-semibold text-white transition-all active:scale-95 cursor-pointer" title="تغيير موقع مواقيت الصلاة">
+
+              <button 
+                id="btn-hero-location" 
+                class="flex items-center gap-1 px-3 py-1 rounded-full bg-black/25 hover:bg-black/40 border border-gold/30 text-xs font-bold text-white transition-all cursor-pointer active:scale-95 shadow-xs" 
+                title="تغيير موقع مواقيت الصلاة"
+              >
                 ${ICONS.mapPin('w-3.5 h-3.5 text-gold')}
-                <span>${state.selectedLocation.city.replace('مركز ', '')}</span>
-                <span class="text-[9px] text-white/70">▼</span>
+                <span>${state.selectedLocation.village || state.selectedLocation.city.replace('مركز ', '')}</span>
+                <span class="text-[9px] opacity-70">▼</span>
               </button>
             </div>
           </div>
 
-          <!-- Center Showcase: Next Prayer & Giant Timer -->
-          <div class="my-3 text-center">
-            <div class="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gold/25 border border-gold/40 text-gold-light text-xs font-bold shadow-xs">
-              ${ICONS.islamicCrescent('w-3.5 h-3.5 text-gold')}
+          <!-- Center Showcase: Next Prayer & Digital Timer (Clean & Non-wrapping) -->
+          <div class="my-2 text-center py-2">
+            <div class="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-black/30 border border-gold/30 text-white text-xs font-bold backdrop-blur-md shadow-xs">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <span>الصلاة القادمة: صلاة ${p.nextPrayer.arabicName}</span>
             </div>
-            <div class="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white my-2 tabular-nums drop-shadow-md" id="prayer-countdown-timer">
+
+            <!-- Crisp Digital Timer (Always on single line with monospace font) -->
+            <div 
+              class="text-4xl sm:text-5xl md:text-6xl font-black font-mono tracking-widest text-white my-2.5 tabular-nums drop-shadow-md select-all" 
+              id="prayer-countdown-timer" 
+              dir="ltr"
+            >
               ${p.nextPrayer.remainingFormatted}
             </div>
-            <div class="text-xs text-white/85 flex items-center justify-center gap-2">
-              <span>موعد الأذان: <strong class="text-gold font-bold font-mono text-sm">${p.nextPrayer.time}</strong></span>
-              <span class="text-white/40">·</span>
-              <span class="text-[11px] text-white/75">${p.nextPrayer.isTomorrow ? 'غداً فجراً' : 'اليوم'}</span>
+
+            <div class="text-xs text-white/90 flex items-center justify-center gap-2 font-medium">
+              <span>موعد الأذان: <strong class="text-gold font-black font-mono text-sm">${p.nextPrayer.time}</strong></span>
+              <span class="opacity-40">·</span>
+              <span class="text-gold-light">${p.nextPrayer.isTomorrow ? 'غداً فجراً' : 'اليوم'}</span>
             </div>
           </div>
 
-          <!-- 6 Prayer Times Row with custom Islamic SVG Icons & Individual Bell Toggles -->
-          <div class="grid grid-cols-6 gap-1.5 pt-2 text-center">
+          <!-- 6 Prayer Times Row with Clear Islamic Highlighting -->
+          <div class="grid grid-cols-6 gap-1.5 pt-2 text-center border-t border-white/10">
             <!-- 1. Fajr -->
-            <div class="${p.nextPrayer.name === 'fajr' ? 'prayer-box-active' : 'prayer-box-inactive'} p-1.5 transition-all relative">
+            <div class="${p.nextPrayer.name === 'fajr' ? 'prayer-box-active' : 'prayer-box-inactive'} p-2 transition-all relative">
               <div class="flex items-center justify-between px-0.5 mb-1">
-                <span class="text-white/70">${ICONS.islamicCrescent('w-3.5 h-3.5')}</span>
-                <button 
-                  class="btn-toggle-prayer-bell p-0.5 rounded-md hover:bg-white/20 transition-colors cursor-pointer ${alertSettings.prayers.fajr.enabled ? 'text-gold' : 'text-white/30'}"
-                  data-prayer="fajr" 
-                  title="${alertSettings.prayers.fajr.enabled ? 'تنبيه الفجر: مفعل (انقر للتعطيل)' : 'تنبيه الفجر: معطل (انقر للتفعيل)'}"
-                >
+                <span class="opacity-80">${ICONS.islamicCrescent('w-3.5 h-3.5 text-gold')}</span>
+                <button class="btn-toggle-prayer-bell p-0.5 rounded hover:opacity-100 transition-opacity cursor-pointer ${alertSettings.prayers.fajr.enabled ? 'opacity-100 text-gold' : 'opacity-40 text-white/60'}" data-prayer="fajr" title="تنبيه الفجر">
                   ${alertSettings.prayers.fajr.enabled ? ICONS.bell('w-3 h-3') : ICONS.bellOff('w-3 h-3')}
                 </button>
               </div>
-              <div class="text-[11px] font-bold ${p.nextPrayer.name === 'fajr' ? 'text-gold' : 'text-white/80'}">الفجر</div>
-              <div class="text-xs font-mono font-bold text-white mt-0.5 tabular-nums">${p.fajr}</div>
+              <div class="text-[11px] font-bold">الفجر</div>
+              <div class="text-xs font-mono font-black mt-0.5 tabular-nums text-white" dir="ltr">${p.fajr}</div>
             </div>
 
             <!-- 2. Sunrise -->
-            <div class="${p.nextPrayer.name === 'sunrise' ? 'prayer-box-active' : 'prayer-box-inactive'} p-1.5 transition-all relative">
+            <div class="${p.nextPrayer.name === 'sunrise' ? 'prayer-box-active' : 'prayer-box-inactive'} p-2 transition-all relative">
               <div class="flex items-center justify-between px-0.5 mb-1">
-                <span class="text-white/70">${ICONS.sunrise('w-3.5 h-3.5')}</span>
-                <button 
-                  class="btn-toggle-prayer-bell p-0.5 rounded-md hover:bg-white/20 transition-colors cursor-pointer ${alertSettings.prayers.sunrise.enabled ? 'text-gold' : 'text-white/30'}"
-                  data-prayer="sunrise" 
-                  title="${alertSettings.prayers.sunrise.enabled ? 'تنبيه الشروق: مفعل (انقر للتعطيل)' : 'تنبيه الشروق: معطل (انقر للتفعيل)'}"
-                >
+                <span class="opacity-80">${ICONS.sunrise('w-3.5 h-3.5 text-gold')}</span>
+                <button class="btn-toggle-prayer-bell p-0.5 rounded hover:opacity-100 transition-opacity cursor-pointer ${alertSettings.prayers.sunrise.enabled ? 'opacity-100 text-gold' : 'opacity-40 text-white/60'}" data-prayer="sunrise" title="تنبيه الشروق">
                   ${alertSettings.prayers.sunrise.enabled ? ICONS.bell('w-3 h-3') : ICONS.bellOff('w-3 h-3')}
                 </button>
               </div>
-              <div class="text-[11px] font-bold ${p.nextPrayer.name === 'sunrise' ? 'text-gold' : 'text-white/80'}">الشروق</div>
-              <div class="text-xs font-mono font-bold text-white mt-0.5 tabular-nums">${p.sunrise}</div>
+              <div class="text-[11px] font-bold">الشروق</div>
+              <div class="text-xs font-mono font-black mt-0.5 tabular-nums text-white" dir="ltr">${p.sunrise}</div>
             </div>
 
             <!-- 3. Dhuhr -->
-            <div class="${p.nextPrayer.name === 'dhuhr' ? 'prayer-box-active' : 'prayer-box-inactive'} p-1.5 transition-all relative">
+            <div class="${p.nextPrayer.name === 'dhuhr' ? 'prayer-box-active' : 'prayer-box-inactive'} p-2 transition-all relative">
               <div class="flex items-center justify-between px-0.5 mb-1">
-                <span class="text-white/70">${ICONS.sun('w-3.5 h-3.5')}</span>
-                <button 
-                  class="btn-toggle-prayer-bell p-0.5 rounded-md hover:bg-white/20 transition-colors cursor-pointer ${alertSettings.prayers.dhuhr.enabled ? 'text-gold' : 'text-white/30'}"
-                  data-prayer="dhuhr" 
-                  title="${alertSettings.prayers.dhuhr.enabled ? 'تنبيه الظهر: مفعل (انقر للتعطيل)' : 'تنبيه الظهر: معطل (انقر للتفعيل)'}"
-                >
+                <span class="opacity-80">${ICONS.sun('w-3.5 h-3.5 text-gold')}</span>
+                <button class="btn-toggle-prayer-bell p-0.5 rounded hover:opacity-100 transition-opacity cursor-pointer ${alertSettings.prayers.dhuhr.enabled ? 'opacity-100 text-gold' : 'opacity-40 text-white/60'}" data-prayer="dhuhr" title="تنبيه الظهر">
                   ${alertSettings.prayers.dhuhr.enabled ? ICONS.bell('w-3 h-3') : ICONS.bellOff('w-3 h-3')}
                 </button>
               </div>
-              <div class="text-[11px] font-bold ${p.nextPrayer.name === 'dhuhr' ? 'text-gold' : 'text-white/80'}">الظهر</div>
-              <div class="text-xs font-mono font-bold text-white mt-0.5 tabular-nums">${p.dhuhr}</div>
+              <div class="text-[11px] font-bold">الظهر</div>
+              <div class="text-xs font-mono font-black mt-0.5 tabular-nums text-white" dir="ltr">${p.dhuhr}</div>
             </div>
 
             <!-- 4. Asr -->
-            <div class="${p.nextPrayer.name === 'asr' ? 'prayer-box-active' : 'prayer-box-inactive'} p-1.5 transition-all relative">
+            <div class="${p.nextPrayer.name === 'asr' ? 'prayer-box-active' : 'prayer-box-inactive'} p-2 transition-all relative">
               <div class="flex items-center justify-between px-0.5 mb-1">
-                <span class="text-white/70">${ICONS.sun('w-3.5 h-3.5 opacity-80')}</span>
-                <button 
-                  class="btn-toggle-prayer-bell p-0.5 rounded-md hover:bg-white/20 transition-colors cursor-pointer ${alertSettings.prayers.asr.enabled ? 'text-gold' : 'text-white/30'}"
-                  data-prayer="asr" 
-                  title="${alertSettings.prayers.asr.enabled ? 'تنبيه العصر: مفعل (انقر للتعطيل)' : 'تنبيه العصر: معطل (انقر للتفعيل)'}"
-                >
+                <span class="opacity-80">${ICONS.sun('w-3.5 h-3.5 text-gold')}</span>
+                <button class="btn-toggle-prayer-bell p-0.5 rounded hover:opacity-100 transition-opacity cursor-pointer ${alertSettings.prayers.asr.enabled ? 'opacity-100 text-gold' : 'opacity-40 text-white/60'}" data-prayer="asr" title="تنبيه العصر">
                   ${alertSettings.prayers.asr.enabled ? ICONS.bell('w-3 h-3') : ICONS.bellOff('w-3 h-3')}
                 </button>
               </div>
-              <div class="text-[11px] font-bold ${p.nextPrayer.name === 'asr' ? 'text-gold' : 'text-white/80'}">العصر</div>
-              <div class="text-xs font-mono font-bold text-white mt-0.5 tabular-nums">${p.asr}</div>
+              <div class="text-[11px] font-bold">العصر</div>
+              <div class="text-xs font-mono font-black mt-0.5 tabular-nums text-white" dir="ltr">${p.asr}</div>
             </div>
 
             <!-- 5. Maghrib -->
-            <div class="${p.nextPrayer.name === 'maghrib' ? 'prayer-box-active' : 'prayer-box-inactive'} p-1.5 transition-all relative">
+            <div class="${p.nextPrayer.name === 'maghrib' ? 'prayer-box-active' : 'prayer-box-inactive'} p-2 transition-all relative">
               <div class="flex items-center justify-between px-0.5 mb-1">
-                <span class="text-white/70">${ICONS.sunset('w-3.5 h-3.5')}</span>
-                <button 
-                  class="btn-toggle-prayer-bell p-0.5 rounded-md hover:bg-white/20 transition-colors cursor-pointer ${alertSettings.prayers.maghrib.enabled ? 'text-gold' : 'text-white/30'}"
-                  data-prayer="maghrib" 
-                  title="${alertSettings.prayers.maghrib.enabled ? 'تنبيه المغرب: مفعل (انقر للتعطيل)' : 'تنبيه المغرب: معطل (انقر للتفعيل)'}"
-                >
+                <span class="opacity-80">${ICONS.sunset('w-3.5 h-3.5 text-gold')}</span>
+                <button class="btn-toggle-prayer-bell p-0.5 rounded hover:opacity-100 transition-opacity cursor-pointer ${alertSettings.prayers.maghrib.enabled ? 'opacity-100 text-gold' : 'opacity-40 text-white/60'}" data-prayer="maghrib" title="تنبيه المغرب">
                   ${alertSettings.prayers.maghrib.enabled ? ICONS.bell('w-3 h-3') : ICONS.bellOff('w-3 h-3')}
                 </button>
               </div>
-              <div class="text-[11px] font-bold ${p.nextPrayer.name === 'maghrib' ? 'text-gold' : 'text-white/80'}">المغرب</div>
-              <div class="text-xs font-mono font-bold text-white mt-0.5 tabular-nums">${p.maghrib}</div>
+              <div class="text-[11px] font-bold">المغرب</div>
+              <div class="text-xs font-mono font-black mt-0.5 tabular-nums text-white" dir="ltr">${p.maghrib}</div>
             </div>
 
             <!-- 6. Isha -->
-            <div class="${p.nextPrayer.name === 'isha' ? 'prayer-box-active' : 'prayer-box-inactive'} p-1.5 transition-all relative">
+            <div class="${p.nextPrayer.name === 'isha' ? 'prayer-box-active' : 'prayer-box-inactive'} p-2 transition-all relative">
               <div class="flex items-center justify-between px-0.5 mb-1">
-                <span class="text-white/70">${ICONS.moonStars('w-3.5 h-3.5')}</span>
-                <button 
-                  class="btn-toggle-prayer-bell p-0.5 rounded-md hover:bg-white/20 transition-colors cursor-pointer ${alertSettings.prayers.isha.enabled ? 'text-gold' : 'text-white/30'}"
-                  data-prayer="isha" 
-                  title="${alertSettings.prayers.isha.enabled ? 'تنبيه العشاء: مفعل (انقر للتعطيل)' : 'تنبيه العشاء: معطل (انقر للتفعيل)'}"
-                >
+                <span class="opacity-80">${ICONS.moonStars('w-3.5 h-3.5 text-gold')}</span>
+                <button class="btn-toggle-prayer-bell p-0.5 rounded hover:opacity-100 transition-opacity cursor-pointer ${alertSettings.prayers.isha.enabled ? 'opacity-100 text-gold' : 'opacity-40 text-white/60'}" data-prayer="isha" title="تنبيه العشاء">
                   ${alertSettings.prayers.isha.enabled ? ICONS.bell('w-3 h-3') : ICONS.bellOff('w-3 h-3')}
                 </button>
               </div>
-              <div class="text-[11px] font-bold ${p.nextPrayer.name === 'isha' ? 'text-gold' : 'text-white/80'}">العشاء</div>
-              <div class="text-xs font-mono font-bold text-white mt-0.5 tabular-nums">${p.isha}</div>
+              <div class="text-[11px] font-bold">العشاء</div>
+              <div class="text-xs font-mono font-black mt-0.5 tabular-nums text-white" dir="ltr">${p.isha}</div>
             </div>
           </div>
 
-          <!-- Prominent Large Mu'adhin Bar (تصميم راقٍ بأيقونات SVG بدون إيموجي) -->
-          <div class="pt-3 border-t border-white/15 mt-3">
-            <div class="bg-slate-950/70 backdrop-blur-md rounded-2xl p-3 border border-gold/40 shadow-xl transition-all">
-              <div class="flex items-center justify-between gap-2 mb-2.5">
-                <div class="flex items-center gap-2.5 min-w-0">
-                  <div class="w-9 h-9 rounded-xl bg-gold/20 border border-gold/40 flex items-center justify-center text-gold shrink-0 shadow-xs">
-                    ${ICONS.mic('w-4.5 h-4.5 text-gold')}
-                  </div>
-                  <div class="min-w-0 text-right">
-                    <div class="text-[11px] text-white/70 font-medium leading-tight">صوت المؤذن المعتمد:</div>
-                    <div class="text-xs sm:text-sm font-black text-gold truncate mt-0.5">
-                      ${MUADHIN_OPTIONS.find(m => m.id === alertSettings.globalSound)?.name || 'أذان الشيخ ناصر القطامي'}
-                    </div>
-                  </div>
-                </div>
-
-                <div class="inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold px-2.5 py-1 rounded-full shrink-0">
-                  ${ICONS.bell('w-3 h-3 text-emerald-400')}
-                  <span>مفعّل</span>
-                </div>
-              </div>
-
-              <button 
-                id="btn-hero-change-muadhin" 
-                class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-gold hover:brightness-110 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99] cursor-pointer"
-                title="انقر لتغيير صوت المؤذن (القطامي، الدوسري، العفاسي، المنشاوي، عبد الباسط، الحصري)"
-              >
-                ${ICONS.mic('w-4 h-4 text-slate-950')}
-                <span>تغيير صوت المؤذن والأذان</span>
-                ${ICONS.bolt('w-3.5 h-3.5 text-slate-950')}
-              </button>
+          <!-- Automatic Adhan Status Bar -->
+          <div class="mt-2.5 pt-2.5 border-t border-white/10 flex items-center justify-between text-xs text-white/90">
+            <div class="flex items-center gap-1.5 font-bold text-[11px]">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>الأذان التلقائي: <strong class="text-gold">مفعّل بصوت عالي عند دخول الوقت</strong></span>
             </div>
+            <button 
+              id="btn-hero-change-muadhin" 
+              class="text-[11px] text-gold-light hover:text-white font-bold underline flex items-center gap-1 cursor-pointer"
+              title="تغيير صوت الأذان أو المؤذن"
+            >
+              <span>${MUADHIN_OPTIONS.find(m => m.id === alertSettings.globalSound)?.name.replace('أذان ', '') || 'تغيير المؤذن'}</span>
+              <span>⚙</span>
+            </button>
           </div>
         </div>
       </div>
 
       <!-- Verse of the Day -->
-      <div class="card-luxury p-4 border-r-4 border-r-gold bg-surface">
-        <div class="flex items-center justify-between text-xs text-muted mb-2">
-          <span class="font-bold text-gold flex items-center gap-1.5">
-            ${ICONS.sparkles('w-4 h-4')}
+      <div class="card-luxury p-4">
+        <div class="flex items-center justify-between text-xs text-graphite mb-2">
+          <span class="font-medium text-obsidian flex items-center gap-1.5">
+            ${ICONS.sparkles('w-3.5 h-3.5 text-graphite')}
             <span>آية اليوم</span>
           </span>
-          <div class="flex items-center gap-1 text-secondary">
-            <button class="btn-copy-text w-8 h-8 rounded-lg flex items-center justify-center hover:bg-surface-subtle hover:text-primary transition-colors" data-copy="﴿أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ﴾ [الرعد: 28]" title="نسخ الآية">
-              ${ICONS.copy('w-4 h-4')}
+          <div class="flex items-center gap-1 text-graphite">
+            <button class="btn-copy-text w-7 h-7 rounded-full flex items-center justify-center hover:bg-ash hover:text-obsidian transition-colors cursor-pointer" data-copy="﴿أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ﴾ [الرعد: 28]" title="نسخ الآية">
+              ${ICONS.copy('w-3.5 h-3.5')}
             </button>
-            <button class="btn-share-verse w-8 h-8 rounded-lg flex items-center justify-center hover:bg-surface-subtle hover:text-primary transition-colors" title="مشاركة">
-              ${ICONS.share('w-4 h-4')}
+            <button class="btn-share-verse w-7 h-7 rounded-full flex items-center justify-center hover:bg-ash hover:text-obsidian transition-colors cursor-pointer" title="مشاركة">
+              ${ICONS.share('w-3.5 h-3.5')}
             </button>
           </div>
         </div>
-        <p class="font-amiri text-lg leading-loose text-center text-primary font-bold my-1">
+        <div class="my-1.5 flex justify-center">
+          ${ICONS.islamicDivider('w-48 h-3 text-gold/50')}
+        </div>
+        <p class="font-amiri text-lg leading-loose text-center text-obsidian font-semibold my-1">
           ﴿ الَّذِينَ آمَنُوا وَتَطْمَئِنُّ قُلُوبُهُم بِذِكْرِ اللَّهِ ۗ أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ ﴾
         </p>
-        <div class="text-left text-[11px] text-muted">
-          سورة الرعد - آية 28 · <a href="https://tanzil.net" target="_blank" class="underline hover:text-primary">Tanzil.net</a>
+        <div class="text-left text-[11px] text-graphite">
+          سورة الرعد - آية 28
         </div>
       </div>
 
-      <!-- Quran Interactive Direct Image Card -->
-      <div class="relative overflow-hidden rounded-2xl border border-gold/30 shadow-md cursor-pointer group" data-action="nav-quran">
-        <img src="/images/quran_rehal.jpg" alt="المصحف الشريف" class="w-full h-32 object-cover group-hover:scale-105 transition-transform duration-500" />
-        <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent flex items-end justify-between p-3.5 text-white">
-          <div>
-            <div class="text-xs text-gold font-bold flex items-center gap-1.5">
-              ${ICONS.quran('w-4 h-4 text-gold')}
-              <span>المصحف الإلكتروني الشريف</span>
-            </div>
-            <div class="text-sm font-bold mt-0.5">تصفح القرآن الكريم كاملاً عبر Tanzil.net</div>
-          </div>
-          <span class="bg-gold text-emerald-950 font-bold text-xs px-3.5 py-1.5 rounded-xl shadow-xs transition-transform group-hover:scale-105">فتح المصحف ←</span>
-        </div>
-      </div>
-
-      <!-- Dhikr of the Day Card -->
-      <div class="card-luxury p-4 bg-surface">
-        <div class="flex items-center justify-between text-xs text-muted mb-2">
-          <span class="font-bold text-primary flex items-center gap-1.5">
-            ${ICONS.duaHands('w-4 h-4')}
-            <span>ذكر اليوم المأثور</span>
+      <!-- Daily Dhikr Interactive Card Deck (نظام بطاقات التالي اليومية) -->
+      <div class="card-luxury p-4 sm:p-5 max-w-full space-y-3">
+        <div class="flex items-center justify-between text-xs text-graphite">
+          <span class="font-medium text-obsidian flex items-center gap-1.5">
+            ${ICONS.duaHands('w-4 h-4 text-graphite')}
+            <span>${currentDailyDhikr.title}</span>
           </span>
-          <span class="text-[11px] text-muted">صحيح مسلم</span>
+          <div class="flex items-center gap-2 font-mono text-[11px]">
+            <span class="font-semibold text-obsidian">بطاقة ${activeDailyIdx + 1}</span>
+            <span class="text-smoke">من ${totalDaily}</span>
+          </div>
         </div>
-        <p class="text-sm font-medium text-secondary leading-relaxed">
-          «سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، عَدَدَ خَلْقِهِ، وَرِضَا نَفْسِهِ، وَزِنَةَ عَرْشِهِ، وَمِدَادَ كَلِمَاتِهِ»
+
+        <p class="font-amiri text-lg sm:text-xl font-semibold text-obsidian leading-loose text-center py-2">
+          ${currentDailyDhikr.text}
         </p>
-        <div class="mt-3 flex items-center justify-between">
-          <button id="btn-quick-tasbeeh" class="bg-primary/10 text-primary hover:bg-primary hover:text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95">
-            ${ICONS.tasbeeh('w-3.5 h-3.5')}
-            <span>سبّح بها الآن</span>
-          </button>
-          <span class="text-xs text-muted">تُقال 3 مرات صباحاً</span>
+
+        <div class="flex items-center justify-between text-xs text-graphite pt-2 border-t border-hairline">
+          <span>المصدر: ${currentDailyDhikr.source} · تكرار: ${currentDailyDhikr.count}</span>
+          <div class="flex items-center gap-1.5">
+            <button id="btn-home-dhikr-prev" class="btn-outlined-pill py-1 px-3 text-xs font-medium cursor-pointer ${activeDailyIdx === 0 ? 'opacity-40 pointer-events-none' : ''}" ${activeDailyIdx === 0 ? 'disabled' : ''}>
+              ${ICONS.arrowRight('w-3 h-3')}
+              <span>السابق</span>
+            </button>
+            <button id="btn-home-dhikr-next" class="btn-filled-black py-1 px-3.5 text-xs font-medium cursor-pointer">
+              <span>${activeDailyIdx < totalDaily - 1 ? 'التالي' : 'البداية'}</span>
+              ${ICONS.arrowLeft('w-3 h-3')}
+            </button>
+          </div>
         </div>
       </div>
 
-      <!-- 14 Main Sections Grid -->
-      <div>
-        <h2 class="text-sm font-bold text-secondary mb-3 flex items-center justify-between">
-          <span>أقسام تطبيق اذكار ، Ankara</span>
-          <span class="text-xs text-muted font-normal">13 قسماً إسلامياً</span>
-        </h2>
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-          <!-- 1. Quran -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="nav-quran">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.quran('w-5 h-5')}
+      <!-- Minimalist Clean Sections Grid -->
+      <div class="space-y-2 max-w-full pt-1">
+        <div class="flex items-center justify-between text-xs text-graphite px-1">
+          <span class="font-medium text-obsidian">أقسام التطبيق</span>
+          <span>منظومة إسلامية متكاملة</span>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-w-full">
+          <!-- 1. Adhkar -->
+          <button class="card-luxury p-3.5 text-right flex flex-col justify-between min-h-[90px] hover:border-obsidian transition-colors group cursor-pointer" data-action="nav-adhkar">
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.duaHands('w-4 h-4')}
             </div>
-            <div>
-              <div class="font-bold text-sm text-primary">القرآن الكريم</div>
-              <div class="text-[10px] text-muted">مصحف تنزيل المعتمد (Tanzil.net)</div>
+            <div class="min-w-0 mt-2">
+              <div class="font-medium text-xs text-obsidian truncate">الأذكار النبوية</div>
+              <div class="text-[11px] text-graphite truncate">23 باباً بنظام البطاقات</div>
             </div>
           </button>
 
-          <!-- 2. Adhkar -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="nav-adhkar">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.duaHands('w-5 h-5')}
+          <!-- 2. Tasbeeh -->
+          <button class="card-luxury p-3.5 text-right flex flex-col justify-between min-h-[90px] hover:border-obsidian transition-colors group cursor-pointer" data-action="nav-tasbeeh">
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.tasbeeh('w-4 h-4')}
             </div>
-            <div>
-              <div class="font-bold text-sm text-primary">الأذكار النبوية</div>
-              <div class="text-[10px] text-muted">23 تصنيفاً معتمداً بالأدلة</div>
-            </div>
-          </button>
-
-          <!-- 3. Tasbeeh -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="nav-tasbeeh">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.tasbeeh('w-5 h-5')}
-            </div>
-            <div>
-              <div class="font-bold text-sm text-primary">المسبحة الإلكترونية</div>
-              <div class="text-[10px] text-muted">عداد ذكي مع اهتزاز وصوت</div>
+            <div class="min-w-0 mt-2">
+              <div class="font-medium text-xs text-obsidian truncate">المسبحة الذكية</div>
+              <div class="text-[11px] text-graphite truncate">عداد إلكتروني مع اهتزاز</div>
             </div>
           </button>
 
-          <!-- 4. Prayer Adhkar -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-subview" data-view="prayer_adhkar">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.mosque('w-5 h-5')}
+          <!-- 3. Prayer Adhkar -->
+          <button class="card-luxury p-3.5 text-right flex flex-col justify-between min-h-[90px] hover:border-obsidian transition-colors group cursor-pointer" data-action="open-subview" data-view="prayer_adhkar">
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.mosque('w-4 h-4')}
             </div>
-            <div>
-              <div class="font-bold text-sm text-primary">أذكار الصلاة</div>
-              <div class="text-[10px] text-muted">مرتبة زمنيّاً بالسنن والأدعية</div>
-            </div>
-          </button>
-
-          <!-- 5. Prayer Times -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-subview" data-view="prayer_times">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.clock('w-5 h-5')}
-            </div>
-            <div>
-              <div class="font-bold text-sm text-primary">مواقيت الصلاة</div>
-              <div class="text-[10px] text-muted">حساب فلكي دقيق بالثانية</div>
+            <div class="min-w-0 mt-2">
+              <div class="font-medium text-xs text-obsidian truncate">أذكار الصلاة</div>
+              <div class="text-[11px] text-graphite truncate">من التكبير إلى التسليم</div>
             </div>
           </button>
 
-          <!-- 6. Prayer Guide -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-subview" data-view="prayer_guide">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.bookGuide('w-5 h-5')}
+          <!-- 4. Prayer Guide -->
+          <button class="card-luxury p-3.5 text-right flex flex-col justify-between min-h-[90px] hover:border-obsidian transition-colors group cursor-pointer" data-action="open-subview" data-view="prayer_guide">
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.bookGuide('w-4 h-4')}
             </div>
-            <div>
-              <div class="font-bold text-sm text-primary">تعليم الصلاة</div>
-              <div class="text-[10px] text-muted">تفاعلي بالخطوات والوضوء</div>
-            </div>
-          </button>
-
-          <!-- 8. Khutbahs -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-subview" data-view="khutbahs">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.speakerKhutbah('w-5 h-5')}
-            </div>
-            <div>
-              <div class="font-bold text-sm text-primary">خطب الجمعة</div>
-              <div class="text-[10px] text-muted">ابن باز ومصادر معتمدة</div>
+            <div class="min-w-0 mt-2">
+              <div class="font-medium text-xs text-obsidian truncate">صفة الصلاة</div>
+              <div class="text-[11px] text-graphite truncate">شرح تفاعلي خطوة بخطوة</div>
             </div>
           </button>
 
-          <!-- 9. Faith -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-subview" data-view="faith">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.heartFaith('w-5 h-5')}
+          <!-- 5. Khutbahs -->
+          <button class="card-luxury p-3.5 text-right flex flex-col justify-between min-h-[90px] hover:border-obsidian transition-colors group cursor-pointer" data-action="open-subview" data-view="khutbahs">
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.speakerKhutbah('w-4 h-4')}
             </div>
-            <div>
-              <div class="font-bold text-sm text-primary">الإيمان بالله</div>
-              <div class="text-[10px] text-muted">الأركان الستة بالأدلة القرآنية</div>
-            </div>
-          </button>
-
-          <!-- 10. Fear & Hope -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-subview" data-view="fear_hope">
-            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.shieldPeace('w-5 h-5')}
-            </div>
-            <div>
-              <div class="font-bold text-sm text-primary">الخوف والرجاء</div>
-              <div class="text-[10px] text-muted">السكينة والهدوء النفسي</div>
+            <div class="min-w-0 mt-2">
+              <div class="font-medium text-xs text-obsidian truncate">خطب الجمعة</div>
+              <div class="text-[11px] text-graphite truncate">نصوص الأوقاف والأزهر</div>
             </div>
           </button>
 
-          <!-- 11. Morning Adhkar -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-adhkar-category" data-cat="morning">
-            <div class="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.sunrise('w-5 h-5')}
+          <!-- 6. Faith -->
+          <button class="card-luxury p-3.5 text-right flex flex-col justify-between min-h-[90px] hover:border-obsidian transition-colors group cursor-pointer" data-action="open-subview" data-view="faith">
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.heartFaith('w-4 h-4')}
             </div>
-            <div>
-              <div class="font-bold text-sm text-primary">أذكار الصباح</div>
-              <div class="text-[10px] text-muted">تحصين وبداية يوم مبارك</div>
-            </div>
-          </button>
-
-          <!-- 12. Evening Adhkar -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-adhkar-category" data-cat="evening">
-            <div class="w-10 h-10 rounded-xl bg-amber-600/10 text-amber-700 dark:text-amber-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.sunset('w-5 h-5')}
-            </div>
-            <div>
-              <div class="font-bold text-sm text-primary">أذكار المساء</div>
-              <div class="text-[10px] text-muted">حفظ وبركة وسكينة الليل</div>
+            <div class="min-w-0 mt-2">
+              <div class="font-medium text-xs text-obsidian truncate">أركان الإيمان</div>
+              <div class="text-[11px] text-graphite truncate">ركائز العقيدة واليقين</div>
             </div>
           </button>
 
-          <!-- 13. Sleep Adhkar -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="open-adhkar-category" data-cat="sleep">
-            <div class="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.moonStars('w-5 h-5')}
+          <!-- 7. Fear & Hope -->
+          <button class="card-luxury p-3.5 text-right flex flex-col justify-between min-h-[90px] hover:border-obsidian transition-colors group cursor-pointer" data-action="open-subview" data-view="fear_hope">
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.shieldPeace('w-4 h-4')}
             </div>
-            <div>
-              <div class="font-bold text-sm text-primary">أذكار النوم</div>
-              <div class="text-[10px] text-muted">تسبيح فاطمة والاستعاذة</div>
+            <div class="min-w-0 mt-2">
+              <div class="font-medium text-xs text-obsidian truncate">الخوف والرجاء</div>
+              <div class="text-[11px] text-graphite truncate">طمأنينة النفس والسكينة</div>
             </div>
           </button>
 
-          <!-- 14. Settings -->
-          <button class="card-luxury p-3 text-right flex flex-col justify-between h-28 hover:border-primary transition-all group" data-action="nav-more">
-            <div class="w-10 h-10 rounded-xl bg-slate-500/10 text-secondary flex items-center justify-center transition-transform group-hover:scale-110">
-              ${ICONS.settings('w-5 h-5')}
+          <!-- 8. InstaPay Subscription -->
+          <button class="card-luxury p-3.5 text-right flex flex-col justify-between min-h-[90px] hover:border-obsidian transition-colors group cursor-pointer" data-action="open-subview" data-view="subscription">
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.instapay('w-4 h-4')}
             </div>
-            <div>
-              <div class="font-bold text-sm text-primary">الإعدادات والمصادر</div>
-              <div class="text-[10px] text-muted">المراجع والاشتراك وتطبيق Android</div>
+            <div class="min-w-0 mt-2">
+              <div class="font-medium text-xs text-obsidian truncate">اشتراك InstaPay</div>
+              <div class="text-[11px] text-graphite truncate">تحويل +201114809908</div>
             </div>
           </button>
         </div>
@@ -925,191 +1133,749 @@ function renderHomeView(): string {
   `;
 }
 
-// Mandatory Google Login Screen
+// Mandatory Authentication Screen (Email & Password + Google + Quick Login)
 function renderMandatoryAuthScreen(): string {
-  const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
-  const isUnauthorizedDomain = state.authErrorCode === 'auth/unauthorized-domain' || (state.authError && state.authError.includes('unauthorized-domain'));
+  const tab = state.authTab || 'login';
+  const showPass = state.showPasswordToggle || false;
 
   return `
-    <div class="min-h-screen bg-canvas text-body font-cairo flex flex-col justify-between max-w-lg mx-auto p-4 sm:p-6 relative overflow-hidden select-none">
-      <!-- Ambient Glows -->
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-primary/10 blur-3xl pointer-events-none"></div>
-      <div class="absolute -bottom-12 -left-12 w-48 h-48 rounded-full bg-gold/15 blur-3xl pointer-events-none"></div>
-
-      <!-- Top Brand -->
+    <div class="min-h-screen bg-canvas text-body flex flex-col justify-between max-w-lg mx-auto p-4 sm:p-6 relative select-none">
+      <!-- Top Brand Header -->
       <div class="text-center pt-6 pb-2 space-y-3">
         <div class="relative inline-block">
-          <img src="/images/app_logo.jpg" alt="Logo" class="w-20 h-20 sm:w-24 sm:h-24 rounded-3xl object-cover border-2 border-gold shadow-lg mx-auto" />
-          <span class="absolute -bottom-1 -right-1 bg-emerald-700 text-gold p-1.5 rounded-xl border border-gold shadow-md">
+          <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl p-1 bg-gradient-to-tr from-emerald-800 via-emerald-600 to-amber-400 mx-auto shadow-2xl flex items-center justify-center">
+            <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[14px] object-cover" />
+          </div>
+          <div class="absolute -bottom-1.5 -right-1.5 bg-emerald-600 text-white rounded-full p-1 shadow-md">
             ${ICONS.sparkles('w-3.5 h-3.5')}
-          </span>
+          </div>
         </div>
 
         <div>
-          <h1 class="text-xl sm:text-2xl font-bold text-primary flex items-center justify-center gap-1.5 leading-tight">
+          <h1 class="text-2xl sm:text-3xl font-black text-primary flex items-center justify-center gap-2 leading-tight">
             <span>اذكار ، Ankara</span>
           </h1>
-          <p class="text-xs text-muted mt-1 font-medium">«رفيقك اليومي للقرآن والذكر والعبادة»</p>
+          <p class="text-xs sm:text-sm text-gold-dark dark:text-gold font-medium mt-1">«رفيقك اليومي للقرآن والذكر والعبادة»</p>
         </div>
       </div>
 
       <!-- Auth Center Card -->
-      <div class="card-luxury p-5 sm:p-6 bg-surface/95 border border-gold/40 rounded-3xl shadow-xl space-y-4 my-auto">
-        <div class="text-center space-y-1.5">
-          <div class="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 mx-auto flex items-center justify-center font-bold">
-            ${ICONS.lock('w-6 h-6')}
-          </div>
-          <h2 class="text-base font-bold text-primary">تسجيل الدخول إجباري للمتابعة</h2>
-          <p class="text-xs text-muted leading-relaxed">
-            يرجى تسجيل الدخول بحسابك في Google عبر Firebase لحفظ ختمتك القرآنية وأذكارك ومزامنة بياناتك بأمان.
-          </p>
+      <div class="card-luxury p-5 sm:p-6 space-y-4.5 my-auto bg-surface border border-gold/20 shadow-xl rounded-2xl">
+        <!-- Auth Tabs Switcher -->
+        <div class="grid grid-cols-3 gap-1 bg-surface-subtle p-1 rounded-xl border border-subtle text-xs font-bold">
+          <button 
+            class="btn-auth-tab py-2 px-1 rounded-lg text-center transition-all cursor-pointer ${tab === 'login' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-primary'}"
+            data-auth-tab="login"
+          >
+            دخول
+          </button>
+          <button 
+            class="btn-auth-tab py-2 px-1 rounded-lg text-center transition-all cursor-pointer ${tab === 'register' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-primary'}"
+            data-auth-tab="register"
+          >
+            حساب جديد
+          </button>
+          <button 
+            class="btn-auth-tab py-2 px-1 rounded-lg text-center transition-all cursor-pointer ${tab === 'forgot' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-primary'}"
+            data-auth-tab="forgot"
+          >
+            استعادة
+          </button>
         </div>
 
-        ${isUnauthorizedDomain ? `
-          <div class="bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 p-3.5 rounded-2xl text-xs space-y-2.5 text-right">
-            <div class="font-bold text-xs flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
-              ${ICONS.alertTriangle('w-4 h-4 text-amber-600')}
-              <span>تنبيه تفعيل النطاق في Firebase (Authorized Domain)</span>
-            </div>
-            <p class="leading-relaxed text-[11px]">
-              النطاق الحالي للتطبيق يحتاج للإضافة في قائمة النطاقات المسموح بها في Firebase Console:
-            </p>
-            <div class="p-2 rounded-xl bg-black/10 dark:bg-black/30 font-mono text-[11px] text-center select-all flex items-center justify-between gap-2 border border-subtle">
-              <span class="truncate font-semibold text-primary" id="copy-domain-text">${currentHost}</span>
-              <button id="btn-copy-domain" class="px-2 py-1 rounded bg-surface border border-subtle text-[10px] font-sans hover:bg-surface-subtle shrink-0">
-                نسخ النطاق
-              </button>
-            </div>
-            <div class="pt-1 flex items-center justify-between gap-2">
-              <a 
-                href="https://console.firebase.google.com/project/azkar-df7c4/authentication/settings" 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                class="text-[11px] text-primary underline font-bold"
-              >
-                فتح إعدادات Firebase ↗
-              </a>
-              <span class="text-[10px] text-muted">Authentication > Settings > Authorized domains</span>
-            </div>
+        <!-- Feedback Alert Messages -->
+        ${state.authError ? `
+          <div class="bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 p-3 rounded-xl text-xs flex items-center gap-2 text-right">
+            ${ICONS.alertTriangle('w-4 h-4 text-rose-500 shrink-0')}
+            <span class="leading-relaxed">${state.authError}</span>
           </div>
-        ` : (state.authError ? `
-          <div class="bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300 p-3 rounded-xl text-xs leading-relaxed text-center">
-            ${state.authError}
-          </div>
-        ` : '')}
+        ` : ''}
 
-        <div class="space-y-3 pt-1">
+        ${state.authSuccessMessage ? `
+          <div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 p-3 rounded-xl text-xs flex items-center gap-2 text-right">
+            ${ICONS.check('w-4 h-4 text-emerald-500 shrink-0')}
+            <span class="leading-relaxed">${state.authSuccessMessage}</span>
+          </div>
+        ` : ''}
+
+        <!-- FORM: LOGIN -->
+        ${tab === 'login' ? `
+          <form id="form-auth-login" class="space-y-3.5">
+            <div>
+              <label class="block text-xs font-bold text-primary mb-1 text-right">البريد الإلكتروني</label>
+              <div class="relative">
+                <input 
+                  type="email" 
+                  id="login-email-input" 
+                  class="w-full bg-surface-subtle border border-subtle focus:border-primary rounded-xl py-2.5 px-3.5 text-xs sm:text-sm text-body focus:outline-none transition-all"
+                  placeholder="name@example.com"
+                  required
+                  dir="ltr"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-xs font-bold text-primary">كلمة المرور</label>
+                <button type="button" class="btn-auth-tab text-[11px] text-gold-dark hover:underline cursor-pointer" data-auth-tab="forgot">نسيت كلمة المرور؟</button>
+              </div>
+              <div class="relative flex items-center">
+                <input 
+                  type="${showPass ? 'text' : 'password'}" 
+                  id="login-password-input" 
+                  class="w-full bg-surface-subtle border border-subtle focus:border-primary rounded-xl py-2.5 px-3.5 pr-10 text-xs sm:text-sm text-body focus:outline-none transition-all"
+                  placeholder="••••••••"
+                  required
+                  dir="ltr"
+                />
+                <button 
+                  type="button" 
+                  id="btn-toggle-password-visibility" 
+                  class="absolute left-3 text-muted hover:text-primary transition-colors cursor-pointer"
+                  title="إظهار / إخفاء كلمة المرور"
+                >
+                  ${showPass ? ICONS.eye('w-4 h-4') : ICONS.eyeOff('w-4 h-4')}
+                </button>
+              </div>
+            </div>
+
+            <button 
+              type="submit" 
+              id="btn-submit-email-login"
+              class="w-full py-3 px-4 bg-primary hover:bg-primary-dark text-white font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
+              ${state.isSigningIn ? 'disabled' : ''}
+            >
+              ${state.isSigningIn ? `
+                <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>جاري تسجيل الدخول...</span>
+              ` : `
+                ${ICONS.lock('w-4 h-4 text-gold')}
+                <span>تسجيل الدخول</span>
+              `}
+            </button>
+          </form>
+        ` : ''}
+
+        <!-- FORM: REGISTER -->
+        ${tab === 'register' ? `
+          <form id="form-auth-register" class="space-y-3.5">
+            <div>
+              <label class="block text-xs font-bold text-primary mb-1 text-right">الاسم الكريم</label>
+              <input 
+                type="text" 
+                id="register-name-input" 
+                class="w-full bg-surface-subtle border border-subtle focus:border-primary rounded-xl py-2.5 px-3.5 text-xs sm:text-sm text-body focus:outline-none transition-all"
+                placeholder="اسم المستخدم"
+                required
+              />
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-primary mb-1 text-right">البريد الإلكتروني</label>
+              <input 
+                type="email" 
+                id="register-email-input" 
+                class="w-full bg-surface-subtle border border-subtle focus:border-primary rounded-xl py-2.5 px-3.5 text-xs sm:text-sm text-body focus:outline-none transition-all"
+                placeholder="name@example.com"
+                required
+                dir="ltr"
+              />
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-primary mb-1 text-right">كلمة المرور (6 أحرف أو أكثر)</label>
+              <div class="relative flex items-center">
+                <input 
+                  type="${showPass ? 'text' : 'password'}" 
+                  id="register-password-input" 
+                  class="w-full bg-surface-subtle border border-subtle focus:border-primary rounded-xl py-2.5 px-3.5 pr-10 text-xs sm:text-sm text-body focus:outline-none transition-all"
+                  placeholder="••••••••"
+                  minlength="6"
+                  required
+                  dir="ltr"
+                />
+                <button 
+                  type="button" 
+                  id="btn-toggle-password-visibility" 
+                  class="absolute left-3 text-muted hover:text-primary transition-colors cursor-pointer"
+                >
+                  ${showPass ? ICONS.eye('w-4 h-4') : ICONS.eyeOff('w-4 h-4')}
+                </button>
+              </div>
+            </div>
+
+            <button 
+              type="submit" 
+              id="btn-submit-email-register"
+              class="w-full py-3 px-4 bg-gradient-to-r from-amber-500 to-gold hover:brightness-105 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-md transition-all active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
+              ${state.isSigningIn ? 'disabled' : ''}
+            >
+              ${state.isSigningIn ? `
+                <div class="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></div>
+                <span>جاري إنشاء الحساب...</span>
+              ` : `
+                ${ICONS.sparkles('w-4 h-4 text-slate-950')}
+                <span>إنشاء حساب جديد والمتابعة</span>
+              `}
+            </button>
+          </form>
+        ` : ''}
+
+        <!-- FORM: FORGOT PASSWORD -->
+        ${tab === 'forgot' ? `
+          <form id="form-auth-forgot" class="space-y-3.5">
+            <p class="text-xs text-muted leading-relaxed text-right">
+              أدخل بريدك الإلكتروني المسجل وسنرسل لك رابطاً لإعادة تعيين وتحديث كلمة المرور بأمان:
+            </p>
+            <div>
+              <label class="block text-xs font-bold text-primary mb-1 text-right">البريد الإلكتروني</label>
+              <input 
+                type="email" 
+                id="forgot-email-input" 
+                class="w-full bg-surface-subtle border border-subtle focus:border-primary rounded-xl py-2.5 px-3.5 text-xs sm:text-sm text-body focus:outline-none transition-all"
+                placeholder="name@example.com"
+                required
+                dir="ltr"
+              />
+            </div>
+
+            <button 
+              type="submit" 
+              id="btn-submit-forgot-pass"
+              class="w-full py-3 px-4 bg-primary hover:bg-primary-dark text-white font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
+              ${state.isSigningIn ? 'disabled' : ''}
+            >
+              ${state.isSigningIn ? `
+                <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>جاري الإرسال...</span>
+              ` : `
+                ${ICONS.bolt('w-4 h-4 text-gold')}
+                <span>إرسال رابط الاستعادة</span>
+              `}
+            </button>
+          </form>
+        ` : ''}
+
+        <!-- Divider -->
+        <div class="relative flex py-1 items-center">
+          <div class="flex-grow border-t border-subtle"></div>
+          <span class="flex-shrink mx-3 text-muted text-[11px] font-medium">أو المتابعة السريعة</span>
+          <div class="flex-grow border-t border-subtle"></div>
+        </div>
+
+        <!-- Alternate Login Actions -->
+        <div class="space-y-2">
           <button 
+            type="button"
             id="btn-google-login-action" 
-            class="w-full py-3.5 px-4 bg-white hover:bg-neutral-50 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-900 dark:text-white font-bold rounded-2xl border-2 border-emerald-600/30 hover:border-emerald-600 shadow-md flex items-center justify-center gap-3 transition-all hover:scale-[1.01] active:scale-[0.98] disabled:opacity-60 cursor-pointer"
+            class="w-full py-2.5 px-3.5 bg-surface-subtle hover:bg-surface border border-subtle rounded-xl text-xs font-bold text-primary flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95"
             ${state.isSigningIn ? 'disabled' : ''}
           >
-            ${state.isSigningIn ? `
-              <div class="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-              <span class="text-sm">جاري تسجيل الدخول عبر Google...</span>
-            ` : `
-              <span class="w-5 h-5 flex items-center justify-center">${ICONS.google('w-5 h-5')}</span>
-              <span class="text-sm font-bold">المتابعة باستخدام حساب Google</span>
-            `}
+            <span class="w-4 h-4 flex items-center justify-center">${ICONS.google('w-4 h-4')}</span>
+            <span>تسجيل الدخول عبر Google</span>
           </button>
 
-          <!-- Instant Demo/Developer Login (Always available so testing is never blocked) -->
+          <!-- Instant Developer/Demo Mode (Never blocked) -->
           <button 
+            type="button"
             id="btn-demo-login-action" 
-            class="w-full py-2.5 px-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 font-bold rounded-xl border border-emerald-500/30 text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            class="w-full py-2 px-3 bg-gold/10 hover:bg-gold/20 border border-gold/30 rounded-xl text-[11px] font-bold text-gold-dark dark:text-gold flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95"
           >
-            ${ICONS.bolt('w-3.5 h-3.5 text-emerald-600')}
-            <span>المتابعة بحساب المطور مالك عبدالودود (دخول فوري)</span>
+            ${ICONS.bolt('w-3.5 h-3.5')}
+            <span>دخول فوري سريع بحساب مالك عبدالودود</span>
           </button>
+        </div>
 
-          <div class="grid grid-cols-2 gap-2 text-[11px] text-muted pt-2 border-t border-subtle">
-            <div class="flex items-center gap-1.5 justify-center">
-              ${ICONS.check('w-3.5 h-3.5 text-emerald-600')}
-              <span>المصحف الشريف الكامل</span>
-            </div>
-            <div class="flex items-center gap-1.5 justify-center">
-              ${ICONS.check('w-3.5 h-3.5 text-emerald-600')}
-              <span>حفظ تقدم الأذكار</span>
-            </div>
-            <div class="flex items-center gap-1.5 justify-center">
-              ${ICONS.check('w-3.5 h-3.5 text-emerald-600')}
-              <span>مواقيت الصلاة الدقيقة</span>
-            </div>
-            <div class="flex items-center gap-1.5 justify-center">
-              ${ICONS.check('w-3.5 h-3.5 text-emerald-600')}
-              <span>السبحة الإلكترونية</span>
-            </div>
+        <!-- Quick Feature Checklist -->
+        <div class="grid grid-cols-2 gap-2 text-[11px] text-muted pt-2 border-t border-subtle">
+          <div class="flex items-center gap-1.5 justify-center">
+            <span class="text-emerald-600 font-bold">${ICONS.check('w-3 h-3')}</span>
+            <span>الأذكار النبوية كاملة</span>
+          </div>
+          <div class="flex items-center gap-1.5 justify-center">
+            <span class="text-emerald-600 font-bold">${ICONS.check('w-3 h-3')}</span>
+            <span>حفظ ومزامنة التقدم</span>
+          </div>
+          <div class="flex items-center gap-1.5 justify-center">
+            <span class="text-emerald-600 font-bold">${ICONS.check('w-3 h-3')}</span>
+            <span>مواقيت الصلاة والأذان</span>
+          </div>
+          <div class="flex items-center gap-1.5 justify-center">
+            <span class="text-emerald-600 font-bold">${ICONS.check('w-3 h-3')}</span>
+            <span>المسبحة الذكية المطورة</span>
           </div>
         </div>
       </div>
 
       <!-- Bottom Dedication Footer -->
       <footer class="mt-4 mb-2 px-2 text-center space-y-1">
-        <p class="text-xs text-primary leading-normal">
+        <p class="text-xs text-primary font-medium leading-normal">
           تم صنعه بواسطة <span class="font-bold text-primary">المبرمج مالك عبدالودود وأحمد رضا الشبراوي</span>
         </p>
-        <p class="text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">
-          تحت إشراف: <span class="font-bold">الدكتور/الشيخ سعد محفوظ</span>
+        <p class="text-[11px] text-muted font-medium">
+          تحت إشراف: <span class="text-gold-dark dark:text-gold font-bold">الدكتور/الشيخ سعد محفوظ</span>
         </p>
       </footer>
     </div>
   `;
 }
 
-// 2. Quran View - Tanzil.net Direct Embed (مصحف تنزيل ملء الصفحة بجودة فائقة ووضوح تام بدون أي فهرس)
+// 2. Quran View - Authentic Native Reader (مصحف المدينة وفهرس السور بدون أي iframe)
 function renderQuranView(): string {
+  if (state.activeSurah) {
+    return renderSurahReaderView();
+  }
+  if (state.quranMode === 'surahs') {
+    return renderSurahIndexView();
+  }
+  return renderMushafPageView();
+}
+
+// Surahs Index View (فهرس الـ 114 سورة كاملة مع البحث والتصنيف والتفسير)
+function renderSurahIndexView(): string {
+  const query = state.surahSearchQuery.trim().toLowerCase();
+  const filterType = state.surahFilterType;
+  
+  let surahs = SURAH_LIST;
+  if (filterType !== 'all') {
+    surahs = surahs.filter(s => s.revelationType === filterType);
+  }
+  if (query) {
+    surahs = surahs.filter(s => 
+      s.name.includes(query) || 
+      s.englishName.toLowerCase().includes(query) || 
+      s.number.toString() === query
+    );
+  }
+
   return `
-    <div class="flex flex-col w-full h-full pb-1 space-y-1.5">
-      <!-- Sleek Top Controls Bar -->
-      <div class="card-luxury px-3 py-2 flex items-center justify-between bg-surface/95 border border-gold/30 rounded-xl shadow-xs">
-        <div class="flex items-center gap-2">
-          <div class="w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-bold text-sm">
+    <div class="space-y-3.5">
+      <!-- Mode & Navigation Bar -->
+      <div class="card-luxury p-2.5 flex items-center justify-between gap-2 bg-surface/95 backdrop-blur-md sticky top-14 z-20 shadow-sm">
+        <div class="flex items-center gap-1.5 p-1 bg-surface-subtle rounded-xl border border-subtle">
+          <button 
+            class="btn-switch-quran-mode px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${state.quranMode === 'mushaf' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-primary'}"
+            data-mode="mushaf"
+          >
             ${ICONS.quran('w-4 h-4')}
-          </div>
-          <div>
-            <div class="text-xs font-bold text-primary flex items-center gap-1.5">
-              <span>المصحف الشريف - Tanzil.net</span>
-              <span class="text-[9px] bg-gold/15 text-gold-dark dark:text-gold px-1.5 py-0.5 rounded font-bold border border-gold/30">معتمد</span>
-            </div>
-            <div class="text-[10px] text-muted">قراءة كاملة بالصفحات والأجزاء والسور مع التلاوات والتفاسير</div>
-          </div>
+            <span>المصحف (صفحات)</span>
+          </button>
+          <button 
+            class="btn-switch-quran-mode px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${state.quranMode === 'surahs' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-primary'}"
+            data-mode="surahs"
+          >
+            ${ICONS.bookGuide('w-4 h-4')}
+            <span>فهرس السور (114)</span>
+          </button>
         </div>
 
-        <div class="flex items-center gap-1.5">
-          <button 
-            id="btn-reload-tanzil-iframe" 
-            class="px-2.5 py-1.5 rounded-lg border border-subtle text-secondary hover:text-primary hover:bg-surface-subtle transition-colors flex items-center gap-1 text-[11px] cursor-pointer" 
-            title="تحديث المصحف"
-          >
-            ${ICONS.rotate('w-3.5 h-3.5')}
-            <span class="text-[10px]">تحديث</span>
-          </button>
-          <a 
-            href="https://tanzil.net/?embed=true" 
-            target="_blank" 
-            rel="noopener noreferrer" 
-            class="px-3 py-1.5 rounded-lg bg-primary text-white text-[11px] font-bold hover:bg-primary-dark transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
-            title="فتح مصحف تنزيل في نافذة كاملة"
-          >
-            <span>ملء الشاشة</span>
-            <span>↗</span>
-          </a>
+        <button 
+          id="btn-toggle-focus-mode" 
+          class="px-2.5 py-1.5 rounded-xl border border-gold/40 text-gold-dark dark:text-gold text-xs font-bold flex items-center gap-1 bg-gold/10 hover:bg-gold/20 transition-all cursor-pointer"
+          title="تفعيل وضع الخشوع والتركيز بدون مشتتات"
+        >
+          ${ICONS.sparkles('w-4 h-4 text-gold')}
+          <span>وضع الخشوع</span>
+        </button>
+      </div>
+
+      <!-- Search & Filters -->
+      <div class="card-luxury p-3 space-y-2.5">
+        <div class="relative">
+          <input 
+            type="text" 
+            id="input-surah-search" 
+            class="w-full bg-surface-subtle border border-subtle rounded-xl py-2 px-3 text-xs text-primary placeholder-muted focus:outline-none focus:border-primary pr-8"
+            placeholder="ابحث عن اسم السورة (مثال: الفاتحة، الكهف، البقرة) أو رقمها..."
+            value="${state.surahSearchQuery}"
+          />
+          <span class="absolute right-2.5 top-2.5 text-muted pointer-events-none">
+            ${ICONS.search('w-3.5 h-3.5 text-muted')}
+          </span>
+          ${state.surahSearchQuery ? `
+            <button id="btn-clear-surah-search" class="absolute left-3 top-2.5 text-muted hover:text-primary cursor-pointer">
+              ${ICONS.close('w-3.5 h-3.5')}
+            </button>
+          ` : ''}
+        </div>
+
+        <div class="flex items-center justify-between text-xs pt-1">
+          <div class="flex items-center gap-1">
+            <button class="btn-filter-surah-type px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${state.surahFilterType === 'all' ? 'bg-primary text-white border-primary' : 'bg-surface border-subtle text-muted'}" data-type="all">الكل (114)</button>
+            <button class="btn-filter-surah-type px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${state.surahFilterType === 'Meccan' ? 'bg-amber-600 text-white border-amber-600' : 'bg-surface border-subtle text-muted'}" data-type="Meccan">مكية (86)</button>
+            <button class="btn-filter-surah-type px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${state.surahFilterType === 'Medinan' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-surface border-subtle text-muted'}" data-type="Medinan">مدنية (28)</button>
+          </div>
+          <span class="text-[11px] text-muted font-bold font-mono">${surahs.length} سورة</span>
         </div>
       </div>
 
-      <!-- Tanzil Embedded Iframe Quran - Maximum Height & Width (ملء الصفحة بوضوح تام) -->
-      <div class="w-full bg-surface rounded-2xl overflow-hidden border border-gold/30 shadow-lg relative flex-1" style="height: calc(100vh - 130px); min-height: 820px;">
-        <iframe 
-          id="tanzil-quran-iframe"
-          width="100%" 
-          height="100%" 
-          src="https://tanzil.net/?embed=true" 
-          style="border: none; width: 100%; height: 100%; min-height: 820px; display: block;" 
-          scrolling="auto" 
-          frameborder="0"
-          allow="fullscreen"
-          allowfullscreen>
-        </iframe>
+      <!-- Surahs List Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        ${surahs.map(s => {
+          const startPage = SURAH_START_PAGE[s.number] || 1;
+          return `
+            <div class="card-luxury p-3 flex items-center justify-between gap-3 hover:border-gold/50 transition-all group">
+              <!-- Surah Info (Click to open continuous surah reader) -->
+              <div class="flex items-center gap-3 min-w-0 flex-1 cursor-pointer btn-open-surah-reader" data-surah-num="${s.number}">
+                <div class="w-10 h-10 rounded-xl bg-gold/15 text-gold-dark dark:text-gold border border-gold/30 flex items-center justify-center font-bold font-mono text-sm shrink-0 group-hover:scale-105 transition-transform">
+                  ${s.number}
+                </div>
+                <div class="min-w-0">
+                  <div class="font-bold text-sm text-primary font-amiri group-hover:text-gold transition-colors flex items-center gap-1.5">
+                    <span>سورة ${s.name}</span>
+                    <span class="text-[10px] px-1.5 py-0.2 rounded font-sans font-semibold ${s.revelationType === 'Meccan' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'}">
+                      ${s.revelationTypeArabic}
+                    </span>
+                  </div>
+                  <div class="text-[11px] text-muted truncate">
+                    ${s.englishName} · ${s.numberOfAyahs} آيات · الجزء ${s.juz}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Jump to Mushaf Page Button -->
+              <button 
+                class="btn-jump-to-mushaf-page px-2.5 py-1.5 rounded-xl bg-surface-subtle hover:bg-gold/20 text-secondary hover:text-gold-dark border border-subtle text-[11px] font-bold shrink-0 flex items-center gap-1 cursor-pointer transition-colors"
+                data-page="${startPage}"
+                title="فتح في صفحة المصحف (ص ${startPage})"
+              >
+                <span>ص ${startPage}</span>
+                ${ICONS.quran('w-3.5 h-3.5')}
+              </button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// --- Audio Recitation Engine for Ayahs ---
+let ayahAudioElement: HTMLAudioElement | null = null;
+
+function playAyahAudio(reciterId: string, surahNum: number, ayahNum: number, ayahInQuran: number) {
+  if (ayahAudioElement) {
+    ayahAudioElement.pause();
+    ayahAudioElement = null;
+  }
+  const url = getAyahAudioUrl(reciterId, surahNum, ayahNum);
+  ayahAudioElement = new Audio(url);
+  state.isAyahAudioPlaying = true;
+  state.playingAyahNumber = ayahInQuran;
+  renderApp();
+
+  ayahAudioElement.play().catch(e => {
+    console.warn("Audio play blocked or network error:", e);
+    state.isAyahAudioPlaying = false;
+    state.playingAyahNumber = null;
+    renderApp();
+  });
+
+  ayahAudioElement.onended = () => {
+    state.isAyahAudioPlaying = false;
+    state.playingAyahNumber = null;
+    renderApp();
+  };
+
+  ayahAudioElement.onerror = () => {
+    state.isAyahAudioPlaying = false;
+    state.playingAyahNumber = null;
+    renderApp();
+  };
+}
+
+function stopAyahAudio() {
+  if (ayahAudioElement) {
+    ayahAudioElement.pause();
+    ayahAudioElement = null;
+  }
+  state.isAyahAudioPlaying = false;
+  state.playingAyahNumber = null;
+  renderApp();
+}
+
+// Unified Full-Featured Ayah Bottom Sheet / Action Drawer
+function renderAyahActionBar(): string {
+  if (!state.selectedAyah) return '';
+  const ayah = state.selectedAyah;
+  const isPlaying = state.isAyahAudioPlaying && state.playingAyahNumber === ayah.numberInQuran;
+  const isFav = isFavorite(`ayah_${ayah.surahNumber}_${ayah.numberInSurah}`);
+
+  return `
+    <div class="mushaf-floating-bar card-luxury p-4 bg-surface/98 backdrop-blur-2xl border-2 border-gold/50 shadow-2xl fixed bottom-18 left-3 right-3 max-w-lg mx-auto z-40 rounded-3xl space-y-3">
+      <!-- Header -->
+      <div class="flex items-center justify-between text-xs pb-2 border-b border-subtle">
+        <div class="flex items-center gap-2">
+          <span class="w-7 h-7 rounded-lg bg-gold/20 text-gold-dark dark:text-gold flex items-center justify-center font-bold font-mono text-xs">
+            ${toArabicNumerals(ayah.numberInSurah)}
+          </span>
+          <span class="font-bold text-sm text-primary">سورة ${ayah.surahName} · الآية ${toArabicNumerals(ayah.numberInSurah)}</span>
+        </div>
+        <button id="btn-close-ayah-action" class="w-7 h-7 rounded-full bg-surface-subtle flex items-center justify-center text-xs font-bold text-muted hover:text-primary transition-colors cursor-pointer" title="إغلاق">
+          ${ICONS.close('w-4 h-4')}
+        </button>
+      </div>
+
+      <!-- Ayah Text with Uthmani Font -->
+      <div class="font-amiri text-base sm:text-lg text-primary leading-loose text-right bg-surface-subtle/70 p-3 rounded-2xl border border-subtle select-text">
+        ﴿${ayah.text}﴾
+      </div>
+
+      <!-- Reciter & Audio Playback Row -->
+      <div class="bg-surface-subtle p-2.5 rounded-2xl border border-subtle flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div class="flex items-center gap-2 flex-1 min-w-[150px]">
+          <span class="text-gold shrink-0">${ICONS.mic('w-4 h-4 text-gold')}</span>
+          <select id="select-ayah-reciter" class="bg-surface border border-subtle text-primary font-bold text-xs py-1.5 px-2 rounded-xl focus:outline-none focus:border-primary truncate w-full cursor-pointer">
+            ${QURAN_RECITERS.map(r => `
+              <option value="${r.id}" ${r.id === state.selectedReciterId ? 'selected' : ''}>${r.nameArabic}</option>
+            `).join('')}
+          </select>
+        </div>
+
+        <button 
+          id="btn-toggle-ayah-audio" 
+          class="px-3.5 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${isPlaying ? 'bg-red-600 text-white animate-pulse' : 'bg-primary hover:bg-primary-dark text-white'}"
+          data-surah="${ayah.surahNumber}"
+          data-ayah="${ayah.numberInSurah}"
+          data-quran="${ayah.numberInQuran}"
+        >
+          <span>${isPlaying ? '■ إيقاف التلاوة' : '▶ استماع للآية'}</span>
+        </button>
+      </div>
+
+      <!-- Sub-Tabs: Tafseer & Translation -->
+      <div class="flex items-center gap-1.5 border-b border-subtle pb-1">
+        <button class="btn-ayah-tab px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${state.activeAyahModalTab === 'tafseer' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-primary'}" data-tab="tafseer">
+          ${ICONS.bookOpen('w-3.5 h-3.5')}
+          <span>التفسير الميسر</span>
+        </button>
+        <button class="btn-ayah-tab px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${state.activeAyahModalTab === 'translation' ? 'bg-primary text-white shadow-xs' : 'text-muted hover:text-primary'}" data-tab="translation">
+          ${ICONS.satellite('w-3.5 h-3.5')}
+          <span>English Translation</span>
+        </button>
+      </div>
+
+      <!-- Tab Content Area -->
+      <div class="max-h-24 overflow-y-auto pr-1 text-xs text-secondary leading-relaxed bg-surface-subtle/50 p-2.5 rounded-xl border border-subtle">
+        ${state.isLoadingAyahDetails ? `
+          <div class="py-2 text-center text-muted flex items-center justify-center gap-2">
+            <span class="inline-block animate-spin w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full"></span>
+            <span>جاري تحميل التفسير الميسر والترجمة...</span>
+          </div>
+        ` : state.activeAyahModalTab === 'tafseer' ? `
+          <p class="font-sans leading-normal">${state.selectedAyahTafseer || 'التفسير الميسر: جاري جلب البيان المعتمد للآية الكريمة...'}</p>
+        ` : `
+          <p class="font-sans leading-normal text-left dir-ltr">${state.selectedAyahTranslation || 'English Translation: Saheeh International loading...'}</p>
+        `}
+      </div>
+
+      <!-- Actions Grid -->
+      <div class="grid grid-cols-3 gap-2 text-xs pt-1">
+        <button 
+          class="btn-share-ayah-card py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-gold/20 text-gold-dark dark:text-gold border border-gold/40 hover:brightness-105 font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+          data-surah="${ayah.surahName}"
+          data-num="${ayah.numberInSurah}"
+          data-text="${ayah.text}"
+        >
+          ${ICONS.image('w-3.5 h-3.5')}
+          <span>مشاركة كبطاقة</span>
+        </button>
+
+        <button 
+          class="btn-copy-selected-ayah py-2 px-2.5 rounded-xl bg-surface-subtle hover:bg-surface text-secondary hover:text-primary border border-subtle font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+          data-copy="﴿${ayah.text}﴾ [سورة ${ayah.surahName}: ${ayah.numberInSurah}]"
+        >
+          ${ICONS.copy('w-3.5 h-3.5')}
+          <span>نسخ</span>
+        </button>
+
+        <button 
+          class="btn-fav-selected-ayah py-2 px-2.5 rounded-xl border border-gold/40 hover:bg-gold hover:text-white text-gold font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer ${isFav ? 'bg-gold text-white' : ''}"
+          data-fav-id="ayah_${ayah.surahNumber}_${ayah.numberInSurah}"
+          data-surah="${ayah.surahName}"
+          data-num="${ayah.numberInSurah}"
+          data-text="${ayah.text}"
+        >
+          ${ICONS.star('w-3.5 h-3.5', isFav)}
+          <span>المفضلة</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// Kids Mode Dashboard
+function renderKidsModeView(): string {
+  const kidsTreasures = [
+    { id: "kid_subhanallah", title: "سبحان الله وبحمده", subtitle: "غراس الجنة العظيم", iconKey: "sparkles", target: 3 },
+    { id: "kid_alhamdulillah", title: "الحمد لله رب العالمين", subtitle: "تملأ الميزان حسنات", iconKey: "heartFaith", target: 3 },
+    { id: "kid_allahuakbar", title: "الله أكبر كبيراً", subtitle: "أعظم الكلمات عند الله", iconKey: "crown", target: 3 },
+    { id: "kid_astaghfirullah", title: "أستغفر الله وأتوب إليه", subtitle: "ممحاة الذنوب والخطايا", iconKey: "shieldPeace", target: 3 },
+    { id: "kid_lailahaillallah", title: "لا إله إلا الله", subtitle: "مفتاح الجنة ونور القلب", iconKey: "islamicStar", target: 3 },
+    { id: "kid_salawat", title: "اللهم صلِّ على محمد", subtitle: "نيل شفاعة الحبيب ﷺ", iconKey: "duaHands", target: 3 }
+  ];
+
+  const kidsAdhkar = [
+    { id: "kid_wake", title: "دعاء الاستيقاظ", text: "الحمد لله الذي أحيانا بعد ما أماتنا وإليه النشور", iconKey: "sunrise", target: 1 },
+    { id: "kid_sleep", title: "دعاء النوم", text: "باسمك ربي وضعت جنبي وبك أرفعه", iconKey: "moonStars", target: 1 },
+    { id: "kid_food", title: "قبل الأكل", text: "بسم الله، وبركة الله", iconKey: "bookOpen", target: 1 },
+    { id: "kid_bismillah", title: "البسملة المباركة", text: "بسم الله الرحمن الرحيم", iconKey: "sparkles", target: 3 },
+    { id: "kid_peace", title: "إفشاء السلام", text: "السلام عليكم ورحمة الله وبركاته", iconKey: "duaHands", target: 3 }
+  ];
+
+  return `
+    <div class="space-y-4 select-none">
+      <!-- Kids Cheerful Hero Banner -->
+      <div class="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-amber-500 via-emerald-600 to-teal-700 text-white shadow-xl relative overflow-hidden">
+        <div class="flex items-center justify-between relative z-10">
+          <div>
+            <div class="text-xs font-bold text-amber-200 flex items-center gap-1.5">
+              ${ICONS.sparkles('w-4 h-4 text-amber-200')}
+              <span>واحة الأبطال الصغار</span>
+            </div>
+            <h2 class="text-xl sm:text-2xl font-black mt-1">مرحباً يا بطل الذكر!</h2>
+            <p class="text-xs text-white/90 mt-0.5">تعلم الأذكار والأدعية اليومية بكل سهولة ومتعة</p>
+          </div>
+          <button id="btn-exit-kids-mode" class="px-3.5 py-2 rounded-2xl bg-white/20 hover:bg-white/30 border border-white/30 text-white font-black text-xs shrink-0 cursor-pointer transition-all active:scale-95 shadow-sm flex items-center gap-1">
+            <span>الوضع العادي</span>
+            ${ICONS.close('w-3.5 h-3.5')}
+          </button>
+        </div>
+      </div>
+
+      <!-- Section 1: كنوز الأذكار المباركة -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between px-1">
+          <h3 class="font-black text-base text-primary flex items-center gap-1.5">
+            ${ICONS.sparkles('w-4.5 h-4.5 text-gold')}
+            <span>كنوز الأذكار اليومية للأبطال</span>
+          </h3>
+          <span class="text-xs text-gold font-bold">6 كنوز</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          ${kidsTreasures.map(s => {
+            const iconFn = (ICONS as any)[s.iconKey] || ICONS.duaHands;
+            return `
+              <div 
+                class="card-luxury p-3.5 rounded-2xl flex items-center gap-3 border-2 border-subtle hover:border-gold cursor-pointer transition-all active:scale-95 group"
+                data-action="nav-tasbeeh"
+              >
+                <div class="w-11 h-11 rounded-2xl bg-gold/15 text-gold-dark dark:text-gold flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                  ${iconFn('w-5 h-5')}
+                </div>
+                <div class="min-w-0">
+                  <div class="font-black text-xs sm:text-sm text-primary group-hover:text-gold transition-colors truncate">
+                    ${s.title}
+                  </div>
+                  <div class="text-[10px] text-muted truncate">${s.subtitle}</div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- Section 2: أذكار البطل اليومية -->
+      <div class="space-y-2 pt-2">
+        <div class="flex items-center justify-between px-1">
+          <h3 class="font-black text-base text-primary flex items-center gap-1.5">
+            ${ICONS.duaHands('w-4.5 h-4.5 text-gold')}
+            <span>أدعية البطل المصورة</span>
+          </h3>
+          <span class="text-xs text-muted">اضغط بعد القراءة</span>
+        </div>
+
+        <div class="space-y-2">
+          ${kidsAdhkar.map(item => {
+            const count = state.dhikrProgress[item.id] || 0;
+            const done = count >= item.target;
+            const iconFn = (ICONS as any)[item.iconKey] || ICONS.duaHands;
+            return `
+              <div class="card-luxury p-3.5 sm:p-4 rounded-2xl flex items-center justify-between gap-3 border-2 ${done ? 'border-emerald-500 bg-emerald-500/10' : 'border-subtle'}">
+                <div class="flex items-center gap-3 min-w-0">
+                  <div class="w-11 h-11 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                    ${iconFn('w-5.5 h-5.5')}
+                  </div>
+                  <div class="min-w-0">
+                    <div class="font-bold text-xs text-gold">${item.title}</div>
+                    <div class="font-amiri text-sm sm:text-base font-bold text-primary truncate mt-0.5">${item.text}</div>
+                  </div>
+                </div>
+
+                <button 
+                  class="btn-tap-dhikr px-3.5 py-2 rounded-xl font-black text-xs shrink-0 cursor-pointer active:scale-95 transition-all shadow-sm flex items-center gap-1 ${done ? 'bg-emerald-600 text-white' : 'bg-primary text-white'}"
+                  data-dhikr-id="${item.id}"
+                  data-target="${item.target}"
+                >
+                  ${done ? ICONS.check('w-3.5 h-3.5') + '<span>أحسنت!</span>' : ICONS.checkCircle('w-3.5 h-3.5') + '<span>قرأت</span>'}
+                </button>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- Section 3: مسبحة البطل السريعة -->
+      <div class="card-luxury p-4 rounded-3xl text-center space-y-3 border-2 border-gold/40 bg-gold/5">
+        <div class="text-xs font-bold text-gold">مسبحة الأبطال السريعة</div>
+        <div class="font-black text-3xl font-mono text-primary tabular-nums" id="kids-tasbeeh-display">
+          ${state.tasbeeh.currentCount}
+        </div>
+        <button 
+          id="btn-kids-tasbeeh-tap" 
+          class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-gold text-slate-950 font-black text-base shadow-lg hover:brightness-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
+        >
+          ${ICONS.tasbeeh('w-5 h-5 text-slate-950')}
+          <span>سبّح واكسب حسنات!</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// Islamic Card Preview & Share Modal
+function renderCardPreviewModal(): string {
+  if (!state.cardPreviewModal) return '';
+  const { title, text, imageUrl } = state.cardPreviewModal;
+  return `
+    <div class="modal-overlay" id="card-preview-overlay" style="z-index: 9999;">
+      <div class="bottom-sheet-content space-y-3.5 text-right max-w-md mx-auto" onclick="event.stopPropagation()">
+        <div class="apple-sheet-handle"></div>
+        <div class="flex items-center justify-between border-b border-subtle pb-2">
+          <h3 class="font-bold text-sm text-primary flex items-center gap-1.5">
+            ${ICONS.sparkles('w-4 h-4 text-gold')}
+            <span>بطاقة المشاركة الفاخرة</span>
+          </h3>
+          <button id="btn-close-card-preview" class="w-8 h-8 rounded-full bg-surface-subtle flex items-center justify-center text-secondary hover:text-primary transition-colors cursor-pointer" title="إغلاق">
+            ${ICONS.close('w-4 h-4')}
+          </button>
+        </div>
+
+        <div class="relative overflow-hidden rounded-2xl border-2 border-gold/40 shadow-2xl bg-black/40 flex items-center justify-center p-2">
+          <img src="${imageUrl}" alt="Islamic Card" class="w-full max-h-[50vh] object-contain rounded-xl shadow-lg" />
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 pt-1">
+          <a 
+            href="${imageUrl}" 
+            download="adhkar-ankara-${Date.now()}.png" 
+            class="py-3 px-4 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
+            ${ICONS.upload('w-4 h-4')}
+            <span>تحميل الصورة (PNG)</span>
+          </a>
+          <button 
+            id="btn-native-share-card" 
+            class="py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-gold text-slate-950 font-black text-xs shadow-md hover:brightness-105 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            data-title="${title}"
+            data-text="${text}"
+          >
+            ${ICONS.share('w-4 h-4')}
+            <span>مشاركة البطاقة</span>
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -1127,8 +1893,37 @@ function renderMushafPageView(): string {
 
   return `
     <div class="space-y-3">
+      <!-- Mode & Focus Bar -->
+      <div class="card-luxury p-2 flex items-center justify-between gap-2 bg-surface/95 backdrop-blur-md sticky top-14 z-20 shadow-sm">
+        <div class="flex items-center gap-1.5 p-1 bg-surface-subtle rounded-xl border border-subtle">
+          <button 
+            class="btn-switch-quran-mode px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 bg-primary text-white shadow-xs"
+            data-mode="mushaf"
+          >
+            ${ICONS.quran('w-4 h-4')}
+            <span>المصحف (صفحات)</span>
+          </button>
+          <button 
+            class="btn-switch-quran-mode px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 text-muted hover:text-primary"
+            data-mode="surahs"
+          >
+            ${ICONS.bookGuide('w-4 h-4')}
+            <span>فهرس السور (114)</span>
+          </button>
+        </div>
+
+        <button 
+          id="btn-toggle-focus-mode" 
+          class="px-2.5 py-1.5 rounded-xl border border-gold/40 text-gold-dark dark:text-gold text-xs font-bold flex items-center gap-1 bg-gold/10 hover:bg-gold/20 transition-all cursor-pointer"
+          title="تفعيل وضع الخشوع والتركيز بدون مشتتات"
+        >
+          ${ICONS.sparkles('w-4 h-4 text-gold')}
+          <span>وضع الخشوع</span>
+        </button>
+      </div>
+
       <!-- Quick Navigation & Controls Bar -->
-      <div class="card-luxury p-2.5 flex items-center justify-between gap-2 bg-surface/95 backdrop-blur-md sticky top-14 z-20 shadow-sm">
+      <div class="card-luxury p-2.5 flex items-center justify-between gap-2 bg-surface/95 backdrop-blur-md sticky top-28 z-20 shadow-sm">
         <!-- Surah Selector Dropdown / Jump -->
         <div class="flex items-center gap-1.5 flex-1 min-w-0">
           <select 
@@ -1294,53 +2089,8 @@ function renderMushafPageView(): string {
         </button>
       </div>
 
-      <!-- Floating Action Bar for Selected Ayah -->
-      ${state.selectedAyah ? `
-        <div class="mushaf-floating-bar card-luxury p-3.5 bg-surface border-2 border-gold/40 shadow-xl fixed bottom-20 left-4 right-4 max-w-lg mx-auto z-40 rounded-2xl">
-          <div class="flex items-center justify-between text-xs text-muted mb-2 pb-1.5 border-b border-subtle">
-            <span class="font-bold text-primary flex items-center gap-1.5">
-              ${ICONS.quran('w-4 h-4 text-gold')}
-              <span>سورة ${state.selectedAyah.surahName} · الآية ${state.selectedAyah.numberInSurah}</span>
-            </span>
-            <button id="btn-close-ayah-action" class="w-6 h-6 rounded-full bg-surface-subtle flex items-center justify-center text-xs font-bold text-muted hover:text-primary">
-              ${ICONS.close('w-3.5 h-3.5')}
-            </button>
-          </div>
-
-          <p class="font-amiri text-sm text-primary leading-relaxed mb-3 line-clamp-2 text-right">
-            ﴿${state.selectedAyah.text}﴾
-          </p>
-
-          <div class="grid grid-cols-3 gap-2 text-xs">
-            <button 
-              class="btn-copy-selected-ayah py-2 px-3 rounded-xl bg-primary/10 hover:bg-primary hover:text-white text-primary font-semibold flex items-center justify-center gap-1.5 transition-colors"
-              data-copy="﴿${state.selectedAyah.text}﴾ [سورة ${state.selectedAyah.surahName}: ${state.selectedAyah.numberInSurah}]"
-            >
-              ${ICONS.copy('w-3.5 h-3.5')}
-              <span>نسخ</span>
-            </button>
-
-            <button 
-              class="btn-share-selected-ayah py-2 px-3 rounded-xl bg-primary/10 hover:bg-primary hover:text-white text-primary font-semibold flex items-center justify-center gap-1.5 transition-colors"
-              data-text="﴿${state.selectedAyah.text}﴾ [سورة ${state.selectedAyah.surahName}: ${state.selectedAyah.numberInSurah}]"
-            >
-              ${ICONS.share('w-3.5 h-3.5')}
-              <span>مشاركة</span>
-            </button>
-
-            <button 
-              class="btn-fav-selected-ayah py-2 px-3 rounded-xl border border-gold/40 hover:bg-gold hover:text-white text-gold font-semibold flex items-center justify-center gap-1.5 transition-colors ${isFavorite(`ayah_${state.selectedAyah.surahNumber}_${state.selectedAyah.numberInSurah}`) ? 'bg-gold text-white' : ''}"
-              data-fav-id="ayah_${state.selectedAyah.surahNumber}_${state.selectedAyah.numberInSurah}"
-              data-surah="${state.selectedAyah.surahName}"
-              data-num="${state.selectedAyah.numberInSurah}"
-              data-text="${state.selectedAyah.text}"
-            >
-              ${ICONS.star('w-3.5 h-3.5', true)}
-              <span>المفضلة</span>
-            </button>
-          </div>
-        </div>
-      ` : ''}
+      <!-- Unified Floating Action Bar for Selected Ayah -->
+      ${renderAyahActionBar()}
 
       <!-- Reading progress indicator across 604 pages -->
       <div class="card-luxury p-2.5 flex items-center justify-between text-[11px] text-muted">
@@ -1382,7 +2132,7 @@ function renderSurahReaderView(): string {
             A+
           </button>
           <button id="btn-bookmark-surah" class="w-8 h-8 rounded-lg border border-subtle flex items-center justify-center text-xs font-bold ${isBookmarked ? 'text-gold border-gold/40 bg-gold/10' : 'text-muted hover:text-gold'}" title="حفظ موضع القراءة">
-            ★
+            ${ICONS.star('w-4 h-4 text-gold', isBookmarked)}
           </button>
         </div>
       </div>
@@ -1453,53 +2203,8 @@ function renderSurahReaderView(): string {
         </div>
       </div>
 
-      <!-- Floating Action Bar for Selected Ayah -->
-      ${state.selectedAyah ? `
-        <div class="mushaf-floating-bar card-luxury p-3.5 bg-surface border-2 border-gold/40 shadow-xl fixed bottom-20 left-4 right-4 max-w-lg mx-auto z-40 rounded-2xl">
-          <div class="flex items-center justify-between text-xs text-muted mb-2 pb-1.5 border-b border-subtle">
-            <span class="font-bold text-primary flex items-center gap-1.5">
-              ${ICONS.quran('w-4 h-4 text-gold')}
-              <span>سورة ${state.selectedAyah.surahName} · الآية ${state.selectedAyah.numberInSurah}</span>
-            </span>
-            <button id="btn-close-ayah-action" class="w-6 h-6 rounded-full bg-surface-subtle flex items-center justify-center text-xs font-bold text-muted hover:text-primary">
-              ${ICONS.close('w-3.5 h-3.5')}
-            </button>
-          </div>
-
-          <p class="font-amiri text-sm text-primary leading-relaxed mb-3 line-clamp-2 text-right">
-            ﴿${state.selectedAyah.text}﴾
-          </p>
-
-          <div class="grid grid-cols-3 gap-2 text-xs">
-            <button 
-              class="btn-copy-selected-ayah py-2 px-3 rounded-xl bg-primary/10 hover:bg-primary hover:text-white text-primary font-semibold flex items-center justify-center gap-1.5 transition-colors"
-              data-copy="﴿${state.selectedAyah.text}﴾ [سورة ${state.selectedAyah.surahName}: ${state.selectedAyah.numberInSurah}]"
-            >
-              ${ICONS.copy('w-3.5 h-3.5')}
-              <span>نسخ</span>
-            </button>
-
-            <button 
-              class="btn-share-selected-ayah py-2 px-3 rounded-xl bg-primary/10 hover:bg-primary hover:text-white text-primary font-semibold flex items-center justify-center gap-1.5 transition-colors"
-              data-text="﴿${state.selectedAyah.text}﴾ [سورة ${state.selectedAyah.surahName}: ${state.selectedAyah.numberInSurah}]"
-            >
-              ${ICONS.share('w-3.5 h-3.5')}
-              <span>مشاركة</span>
-            </button>
-
-            <button 
-              class="btn-fav-selected-ayah py-2 px-3 rounded-xl border border-gold/40 hover:bg-gold hover:text-white text-gold font-semibold flex items-center justify-center gap-1.5 transition-colors ${isFavorite(`ayah_${state.selectedAyah.surahNumber}_${state.selectedAyah.numberInSurah}`) ? 'bg-gold text-white' : ''}"
-              data-fav-id="ayah_${state.selectedAyah.surahNumber}_${state.selectedAyah.numberInSurah}"
-              data-surah="${state.selectedAyah.surahName}"
-              data-num="${state.selectedAyah.numberInSurah}"
-              data-text="${state.selectedAyah.text}"
-            >
-              ${ICONS.star('w-3.5 h-3.5', true)}
-              <span>المفضلة</span>
-            </button>
-          </div>
-        </div>
-      ` : ''}
+      <!-- Unified Floating Action Bar for Selected Ayah -->
+      ${renderAyahActionBar()}
 
       <!-- Source attribution banner -->
       <div class="text-center text-xs text-muted border-t border-subtle pt-3">
@@ -1509,148 +2214,246 @@ function renderSurahReaderView(): string {
   `;
 }
 
-// 3. Adhkar View (23 Categories with real Interactive Counters & Progress)
+// 3. Adhkar View (23 Categories with real Interactive Counters & Step-by-Step Card Deck نظام بطاقات التالي)
 function renderAdhkarView(): string {
   const currentCategory = ADHKAR_CATEGORIES.find(c => c.id === state.activeAdhkarCategory) || ADHKAR_CATEGORIES[0];
   const adhkarList = ALL_ADHKAR.filter(a => a.category === currentCategory.id);
+  const totalCards = adhkarList.length;
+  const activeIndex = Math.min(Math.max(0, state.adhkarCardIndex), Math.max(0, totalCards - 1));
+  state.adhkarCardIndex = activeIndex;
+
+  const currentItem = adhkarList[activeIndex];
+  const currentProgress = currentItem ? (state.dhikrProgress[currentItem.id] || 0) : 0;
+  const remaining = currentItem ? Math.max(0, currentItem.count - currentProgress) : 0;
+  const isDone = currentItem ? remaining === 0 : false;
+  const percent = currentItem ? Math.min(100, Math.round((currentProgress / currentItem.count) * 100)) : 0;
 
   return `
     <div class="space-y-4">
-      <!-- Adhkar Spiritual Image Banner -->
-      <div class="relative overflow-hidden rounded-2xl border border-gold/30 shadow-md">
-        <img src="/images/adhkar_banner.jpg" alt="الأذكار والتسبيح" class="w-full h-32 object-cover" />
-        <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent flex flex-col justify-end p-3.5 text-white">
-          <div class="text-xs text-gold font-bold flex items-center gap-1.5">
-            ${ICONS.islamicCrescent('w-3.5 h-3.5 text-gold')}
-            <span>﴿ فَاذْكُرُونِي أَذْكُرْكُمْ وَاشْكُرُوا لِي ﴾</span>
-          </div>
-          <div class="text-sm font-bold mt-0.5">حصن المسلم - 23 باباً من الأذكار النبوية المأثورة</div>
-        </div>
-      </div>
-
+      <!-- Minimalist Header & Mode Switcher -->
       <div class="flex items-center justify-between">
         <div>
-          <h2 class="text-base font-bold text-primary flex items-center gap-2">
-            <span class="text-gold">${ICONS.duaHands('w-5 h-5 text-gold')}</span>
+          <h2 class="text-base font-semibold text-obsidian flex items-center gap-2">
+            <span>${ICONS.duaHands('w-4 h-4 text-graphite')}</span>
             <span>أذكار المسلم المأثورة</span>
           </h2>
-          <p class="text-xs text-muted">من كتاب حصن المسلم وصحيح السنة النبوية</p>
+          <p class="text-xs text-graphite">من كتاب حصن المسلم وصحيح السنة</p>
         </div>
-        <span class="text-xs bg-primary/10 text-primary font-bold px-3 py-1 rounded-full">
-          ${adhkarList.length} أذكار
-        </span>
+        <div class="flex items-center gap-1.5">
+          <button 
+            id="btn-toggle-adhkar-view-mode" 
+            class="btn-outlined-pill py-1 px-3 text-xs font-medium cursor-pointer flex items-center gap-1.5"
+            title="تبديل طريقة العرض"
+          >
+            ${state.adhkarViewMode === 'cards' ? `${ICONS.sliders('w-3 h-3')} <span>عرض القائمة</span>` : `${ICONS.image('w-3 h-3')} <span>نظام البطاقات</span>`}
+          </button>
+        </div>
       </div>
 
-      <!-- Category Filter Chips Scroller -->
-      <div class="flex items-center gap-2 overflow-x-auto pb-2 -mx-4 px-4 scrollbar-none">
+      <!-- Category Filter Chips Scroller (Swipeable) -->
+      <div class="flex items-center gap-2 overflow-x-auto pb-1 -mx-4 px-4 scrollbar-none">
         ${ADHKAR_CATEGORIES.map(cat => `
           <button 
-            class="filter-chip ${cat.id === state.activeAdhkarCategory ? 'active' : ''}" 
+            class="filter-chip ${cat.id === state.activeAdhkarCategory ? 'active' : ''} flex items-center gap-1.5 cursor-pointer shrink-0" 
             data-cat-id="${cat.id}"
           >
-            <span>${cat.icon}</span>
+            <span class="flex items-center">${getAdhkarCategoryIconSvg(cat.id, 'w-3.5 h-3.5')}</span>
             <span>${cat.name}</span>
           </button>
         `).join('')}
       </div>
 
-      <!-- Active Category Header -->
-      <div class="flex items-center justify-between bg-primary/10 border border-primary/20 rounded-xl p-3">
-        <div class="flex items-center gap-2">
-          <span class="text-xl">${currentCategory.icon}</span>
-          <div>
-            <h3 class="font-bold text-sm text-primary">${currentCategory.name}</h3>
-            <span class="text-xs text-muted">${adhkarList.length} أذكار واردة</span>
-          </div>
-        </div>
-        <button id="btn-reset-category-counters" class="text-xs font-bold text-primary hover:underline flex items-center gap-1.5 cursor-pointer">
-          ${ICONS.rotateCcw('w-3.5 h-3.5 text-primary')}
-          <span>إعادة تعيين العدادات</span>
-        </button>
-      </div>
-
-      <!-- Adhkar Cards List with Apple Spring Physics & Sound FX -->
-      <div class="space-y-3">
-        ${adhkarList.length === 0 ? `
-          <div class="card-luxury p-8 text-center text-muted text-sm">
+      ${state.adhkarViewMode === 'cards' ? `
+        <!-- CARD DECK MODE: نظام بطاقات نظام التالي -->
+        ${!currentItem ? `
+          <div class="card-luxury p-8 text-center text-graphite text-sm">
             لا توجد أذكار في هذا القسم حالياً.
           </div>
-        ` : adhkarList.map(item => {
-          const currentProgress = state.dhikrProgress[item.id] || 0;
-          const remaining = Math.max(0, item.count - currentProgress);
-          const isDone = remaining === 0;
-          const percent = Math.min(100, Math.round((currentProgress / item.count) * 100));
+        ` : `
+          <!-- Card Progress Line & Step Info -->
+          <div class="flex items-center justify-between text-xs text-graphite px-1">
+            <span class="font-medium text-obsidian flex items-center gap-1.5">
+              ${getAdhkarCategoryIconSvg(currentCategory.id, 'w-3.5 h-3.5 text-graphite')}
+              <span>${currentCategory.name}</span>
+            </span>
+            <div class="flex items-center gap-2 font-mono text-xs">
+              <span class="font-semibold text-obsidian">بطاقة ${activeIndex + 1}</span>
+              <span class="text-smoke">من ${totalCards}</span>
+            </div>
+          </div>
 
-          return `
-            <div class="card-luxury apple-spring-press p-4 space-y-3 relative transition-all ${isDone ? 'border-primary/60 bg-primary/5 apple-celebrate-glow' : ''}" id="dhikr-card-${item.id}">
-              <!-- Top Info -->
-              <div class="flex items-center justify-between text-xs text-muted">
-                <span class="font-bold text-primary">${item.categoryName}</span>
-                <div class="flex items-center gap-2">
-                  <span class="bg-surface-subtle px-2 py-0.5 rounded text-[11px] font-mono">
-                    التكرار: ${item.count}
-                  </span>
-                  <button class="btn-fav-dhikr text-muted hover:text-gold ${isFavorite(item.id) ? 'text-gold' : ''}" data-id="${item.id}" data-text="${item.text.slice(0, 50)}">
-                    ${ICONS.star('w-3.5 h-3.5', isFavorite(item.id))}
+          <!-- Progress Bar of Deck -->
+          <div class="w-full bg-ash h-1.5 rounded-full overflow-hidden border border-hairline">
+            <div class="bg-obsidian h-full transition-all duration-300" style="width: ${((activeIndex + 1) / totalCards) * 100}%;"></div>
+          </div>
+
+          <!-- The Interactive Dhikr Card (Swipeable with Touch) -->
+          <div class="card-deck-container" id="adhkar-deck-touch-area">
+            <div class="card-luxury card-deck-item p-4 sm:p-5 space-y-4 relative transition-all" id="dhikr-card-${currentItem.id}">
+              <!-- Top Row Info -->
+              <div class="flex items-center justify-between text-xs text-graphite">
+                <span class="bg-ash px-2.5 py-0.5 rounded-full text-xs font-mono font-medium text-obsidian border border-hairline">
+                  التكرار المطلوب: ${currentItem.count}
+                </span>
+                <div class="flex items-center gap-1 text-graphite">
+                  <button class="btn-fav-dhikr hover:text-obsidian p-1 rounded-full hover:bg-ash ${isFavorite(currentItem.id) ? 'text-obsidian' : ''}" data-id="${currentItem.id}" data-text="${currentItem.text.slice(0, 50)}" title="إضافة للمفضلة">
+                    ${ICONS.star('w-3.5 h-3.5', isFavorite(currentItem.id))}
+                  </button>
+                  <button class="btn-share-dhikr-card hover:text-obsidian p-1 rounded-full hover:bg-ash cursor-pointer transition-colors" data-category="${currentItem.categoryName}" data-text="${currentItem.text}" data-source="${currentItem.source}" title="مشاركة كبطاقة صورة">
+                    ${ICONS.image('w-3.5 h-3.5')}
+                  </button>
+                  <button class="btn-copy-text hover:text-obsidian p-1 rounded-full hover:bg-ash cursor-pointer" data-copy="${currentItem.text} [${currentItem.source}]" title="نسخ النص">
+                    ${ICONS.copy('w-3.5 h-3.5')}
                   </button>
                 </div>
               </div>
 
-              <!-- Dhikr Text -->
-              <p class="font-amiri text-lg text-primary leading-loose text-right select-text">
-                ${item.text}
+              <!-- Dhikr Arabic Text -->
+              <p class="font-amiri text-xl sm:text-2xl text-obsidian leading-loose text-center font-semibold select-text py-2">
+                ${currentItem.text}
               </p>
 
-              <!-- Benefit / Source -->
-              ${item.benefit ? `
-                <div class="text-xs text-secondary bg-surface-subtle/80 p-2.5 rounded-xl border border-subtle flex items-start gap-1.5">
-                  <span class="text-gold shrink-0 mt-0.5">${ICONS.sparkles('w-3.5 h-3.5 text-gold')}</span>
-                  <div><span class="font-bold text-primary">الفضل:</span> ${item.benefit}</div>
+              <!-- Optional Benefit -->
+              ${currentItem.benefit ? `
+                <div class="text-xs text-graphite bg-ash p-3 rounded-[6px] border border-hairline flex items-start gap-2 text-right">
+                  <span class="text-graphite shrink-0 mt-0.5">${ICONS.sparkles('w-3.5 h-3.5')}</span>
+                  <div><span class="font-semibold text-obsidian">الفضل:</span> ${currentItem.benefit}</div>
                 </div>
               ` : ''}
-              <div class="text-[11px] text-muted flex items-center justify-between">
-                <span>المصدر: ${item.source}</span>
-                <button class="btn-copy-text hover:text-primary flex items-center gap-1 text-[11px] cursor-pointer" data-copy="${item.text} [${item.source}]">
-                  ${ICONS.copy('w-3 h-3')}
-                  <span>نسخ</span>
+
+              <!-- Source -->
+              <div class="text-[11px] text-graphite text-left border-t border-hairline pt-2">
+                المصدر: ${currentItem.source}
+              </div>
+
+              <!-- Interactive Dhikr Tap Button -->
+              <div class="pt-2">
+                <button 
+                  class="btn-tap-dhikr w-full py-3.5 rounded-full font-medium text-sm flex items-center justify-center gap-2.5 transition-all cursor-pointer ${isDone ? 'bg-ash text-obsidian border border-hairline' : 'btn-filled-black'}"
+                  data-dhikr-id="${currentItem.id}"
+                  data-target="${currentItem.count}"
+                >
+                  <span class="dhikr-tap-label flex items-center gap-1.5">
+                    ${isDone ? `${ICONS.check('w-4 h-4')} <span>تم الذكر بحمد الله</span>` : `${ICONS.tasbeeh('w-4 h-4')} <span>اضغط للتسبيح</span>`}
+                  </span>
+                  <span class="font-mono text-xs font-semibold tabular-nums px-2 py-0.5 rounded-full ${isDone ? 'bg-paper border border-hairline' : 'bg-white/20'}">
+                    (${remaining} متبقي)
+                  </span>
                 </button>
               </div>
 
-              <!-- Progress Bar -->
-              <div class="w-full bg-surface-subtle h-2 rounded-full overflow-hidden border border-subtle">
-                <div class="bg-primary h-full transition-all duration-300" style="width: ${percent}%;"></div>
-              </div>
+              <!-- Next / Prev Deck Control Bar (نظام التالي والسابق) -->
+              <div class="flex items-center justify-between gap-2 pt-2 border-t border-hairline">
+                <button 
+                  id="btn-adhkar-card-prev" 
+                  class="btn-outlined-pill py-1.5 px-3.5 text-xs font-medium cursor-pointer ${activeIndex > 0 ? '' : 'opacity-40 pointer-events-none'}"
+                  ${activeIndex === 0 ? 'disabled' : ''}
+                >
+                  ${ICONS.arrowRight('w-3.5 h-3.5')}
+                  <span>السابق</span>
+                </button>
 
-              <!-- Interactive Counter Controls with Apple Sound FX -->
-              <div class="flex items-center justify-between pt-1">
-                <div class="text-xs font-bold ${isDone ? 'text-emerald-600 dark:text-emerald-400 flex items-center gap-1' : 'text-secondary'}">
-                  ${isDone ? `${ICONS.check('w-3.5 h-3.5')} <span>تم بحمد الله</span>` : `المتبقي: <span class="font-mono font-black tabular-nums">${remaining}</span> من ${item.count}`}
-                </div>
+                <button 
+                  class="btn-reset-dhikr w-8 h-8 rounded-full border border-hairline flex items-center justify-center text-graphite hover:text-obsidian hover:bg-ash transition-colors cursor-pointer"
+                  data-dhikr-id="${currentItem.id}"
+                  title="إعادة تعيين عداد هذا الذكر"
+                >
+                  ${ICONS.rotateCcw('w-3.5 h-3.5')}
+                </button>
 
-                <div class="flex items-center gap-2">
-                  <button 
-                    class="btn-reset-dhikr apple-spring-press w-9 h-9 rounded-xl border border-subtle flex items-center justify-center text-secondary hover:bg-surface-subtle transition-all cursor-pointer"
-                    data-dhikr-id="${item.id}"
-                    title="إعادة العداد"
-                  >
-                    ${ICONS.rotateCcw('w-4 h-4 text-secondary')}
-                  </button>
-                  <button 
-                    class="btn-tap-dhikr btn-touch apple-spring-press px-5 py-2.5 rounded-xl font-black text-sm shadow-md flex items-center gap-2 transition-all cursor-pointer ${isDone ? 'bg-primary/20 text-primary border-2 border-primary/50' : 'bg-primary hover:bg-primary-dark text-white'}"
-                    data-dhikr-id="${item.id}"
-                    data-target="${item.count}"
-                  >
-                    <span class="dhikr-tap-label flex items-center gap-1">
-                      ${isDone ? `${ICONS.check('w-4 h-4')} <span>تم</span>` : '<span>ذِكْر</span>'}
-                    </span>
-                    <span class="font-mono text-xs font-black tabular-nums">(${remaining})</span>
-                  </button>
-                </div>
+                <button 
+                  id="btn-adhkar-card-next" 
+                  class="btn-filled-black py-1.5 px-4 text-xs font-medium cursor-pointer"
+                >
+                  <span>${activeIndex < totalCards - 1 ? 'التالي' : 'العودة للبداية'}</span>
+                  ${ICONS.arrowLeft('w-3.5 h-3.5')}
+                </button>
               </div>
             </div>
-          `;
-        }).join('')}
-      </div>
+          </div>
+          <p class="text-center text-[11px] text-graphite">يمكنك التمرير باللمس يميناً ويساراً للتنقل بين البطاقات</p>
+        `}
+      ` : `
+        <!-- LIST MODE: عرض القائمة المجمعة -->
+        <div class="space-y-3">
+          ${adhkarList.map((item, idx) => {
+            const currentProgress = state.dhikrProgress[item.id] || 0;
+            const remaining = Math.max(0, item.count - currentProgress);
+            const isDone = remaining === 0;
+            const percent = Math.min(100, Math.round((currentProgress / item.count) * 100));
+
+            return `
+              <div class="card-luxury p-4 space-y-3 relative transition-all" id="dhikr-card-${item.id}">
+                <div class="flex items-center justify-between text-xs text-graphite">
+                  <span class="font-medium text-obsidian">بطاقة ${idx + 1} - ${item.categoryName}</span>
+                  <div class="flex items-center gap-2">
+                    <span class="bg-ash px-2 py-0.5 rounded-full text-[11px] font-mono border border-hairline">
+                      التكرار: ${item.count}
+                    </span>
+                    <button class="btn-fav-dhikr hover:text-obsidian p-1 rounded-full hover:bg-ash ${isFavorite(item.id) ? 'text-obsidian' : ''}" data-id="${item.id}" data-text="${item.text.slice(0, 50)}">
+                      ${ICONS.star('w-3.5 h-3.5', isFavorite(item.id))}
+                    </button>
+                  </div>
+                </div>
+
+                <p class="font-amiri text-lg text-obsidian leading-loose text-right select-text">
+                  ${item.text}
+                </p>
+
+                ${item.benefit ? `
+                  <div class="text-xs text-graphite bg-ash p-2.5 rounded-[6px] border border-hairline flex items-start gap-1.5">
+                    <span class="text-graphite shrink-0 mt-0.5">${ICONS.sparkles('w-3.5 h-3.5')}</span>
+                    <div><span class="font-semibold text-obsidian">الفضل:</span> ${item.benefit}</div>
+                  </div>
+                ` : ''}
+
+                <div class="text-[11px] text-graphite flex items-center justify-between border-t border-hairline pt-2">
+                  <span>المصدر: ${item.source}</span>
+                  <div class="flex items-center gap-2">
+                    <button class="btn-share-dhikr-card hover:text-obsidian flex items-center gap-1 text-[11px] cursor-pointer" data-category="${item.categoryName}" data-text="${item.text}" data-source="${item.source}">
+                      ${ICONS.image('w-3 h-3')}
+                      <span>بطاقة</span>
+                    </button>
+                    <button class="btn-copy-text hover:text-obsidian flex items-center gap-1 text-[11px] cursor-pointer" data-copy="${item.text} [${item.source}]">
+                      ${ICONS.copy('w-3 h-3')}
+                      <span>نسخ</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="w-full bg-ash h-1.5 rounded-full overflow-hidden border border-hairline">
+                  <div class="bg-obsidian h-full transition-all duration-300" style="width: ${percent}%;"></div>
+                </div>
+
+                <div class="flex items-center justify-between pt-1">
+                  <div class="text-xs font-medium ${isDone ? 'text-obsidian flex items-center gap-1' : 'text-graphite'}">
+                    ${isDone ? `${ICONS.check('w-3.5 h-3.5')} <span>تم بحمد الله</span>` : `المتبقي: <span class="font-mono font-semibold tabular-nums text-obsidian">${remaining}</span> من ${item.count}`}
+                  </div>
+
+                  <div class="flex items-center gap-2">
+                    <button 
+                      class="btn-reset-dhikr w-8 h-8 rounded-full border border-hairline flex items-center justify-center text-graphite hover:bg-ash hover:text-obsidian transition-colors cursor-pointer"
+                      data-dhikr-id="${item.id}"
+                      title="إعادة العداد"
+                    >
+                      ${ICONS.rotateCcw('w-3.5 h-3.5')}
+                    </button>
+
+                    <button 
+                      class="btn-tap-dhikr ${isDone ? 'bg-ash text-obsidian border border-hairline' : 'btn-filled-black'} px-4 py-1.5 text-xs font-medium flex items-center gap-1 cursor-pointer"
+                      data-dhikr-id="${item.id}"
+                      data-target="${item.count}"
+                    >
+                      ${ICONS.tasbeeh('w-3.5 h-3.5')}
+                      <span>${isDone ? 'مكتمل' : 'ذِكْر'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `}
     </div>
   `;
 }
@@ -1665,29 +2468,29 @@ function renderTasbeehView(): string {
   return `
     <div class="space-y-4 text-center">
       <div>
-        <h2 class="text-base font-bold text-primary flex items-center justify-center gap-2">
-          <span>${ICONS.tasbeeh('w-5 h-5 text-gold')}</span>
-          <span>المسبحة الإلكترونية الفخمة</span>
+        <h2 class="text-base font-semibold text-obsidian flex items-center justify-center gap-2">
+          <span>${ICONS.tasbeeh('w-4 h-4 text-graphite')}</span>
+          <span>المسبحة الإلكترونية</span>
         </h2>
-        <p class="text-xs text-muted">تسبيح مستمر مع اهتزاز هابتك وصوت الخرزات</p>
+        <p class="text-xs text-graphite">تسبيح مستمر مع اهتزاز هابتك وصوت الخرزات</p>
       </div>
 
-      <!-- Dhikr Picker Dropdown / Chips -->
-      <div class="card-luxury p-3">
-        <label class="block text-xs text-muted mb-1 text-right">الذكر المختار للتسبيح:</label>
-        <select id="tasbeeh-dhikr-select" class="w-full bg-surface-subtle border border-subtle rounded-xl p-2.5 text-sm font-bold text-primary focus:outline-none focus:border-primary">
+      <!-- Dhikr Picker Dropdown -->
+      <div class="card-luxury p-3 text-right">
+        <label class="block text-xs text-graphite mb-1.5 font-medium">الذكر المختار للتسبيح:</label>
+        <select id="tasbeeh-dhikr-select" class="w-full bg-paper border border-hairline rounded-full py-2 px-4 text-xs font-medium text-obsidian focus:outline-none focus:border-obsidian">
           ${TASBEEH_PRESETS.map(d => `
             <option value="${d}" ${d === t.selectedDhikr ? 'selected' : ''}>${d}</option>
           `).join('')}
         </select>
       </div>
 
-      <!-- Target Selection Buttons -->
-      <div class="flex items-center justify-center gap-2">
-        <span class="text-xs text-muted">الهدف:</span>
+      <!-- Target Selection Chips -->
+      <div class="flex items-center justify-center gap-1.5 flex-wrap">
+        <span class="text-xs text-graphite font-medium">الهدف:</span>
         ${TARGET_PRESETS.map(tg => `
           <button 
-            class="px-3 py-1 rounded-lg text-xs font-bold border transition-colors ${tg === t.target ? 'bg-primary text-white border-primary' : 'bg-surface border-subtle text-secondary'}"
+            class="filter-chip ${tg === t.target ? 'active' : ''} py-1 px-3 text-xs font-medium cursor-pointer"
             data-target-choice="${tg}"
           >
             ${tg === 0 ? 'مفتوح' : tg}
@@ -1699,62 +2502,62 @@ function renderTasbeehView(): string {
       <div class="py-4">
         <div 
           id="tasbeeh-tap-circle" 
-          class="tasbeeh-ring bg-gradient-to-b from-surface to-surface-subtle border-4 border-gold shadow-lg hover:shadow-xl active:scale-95 transition-all select-none"
+          class="tasbeeh-ring select-none"
         >
           <!-- Circular Progress Ring (SVG) -->
           <svg class="absolute inset-0 w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" stroke-width="4" class="text-subtle opacity-20" />
+            <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" stroke-width="3" class="text-ash" />
             <circle 
               cx="50" cy="50" r="45" 
               fill="none" 
               stroke="currentColor" 
-              stroke-width="5" 
+              stroke-width="3" 
               stroke-dasharray="283" 
               stroke-dashoffset="${283 - (283 * progressPercent) / 100}" 
               stroke-linecap="round" 
-              class="text-primary transition-all duration-150" 
+              class="text-obsidian transition-all duration-150" 
             />
           </svg>
 
           <!-- Counter Numbers Inside -->
-          <div class="relative z-10">
-            <div class="text-5xl font-black font-mono text-primary tracking-tight tabular-nums" id="tasbeeh-display-count">
+          <div class="relative z-10 text-center">
+            <div class="text-5xl font-semibold font-mono text-obsidian tracking-tighter tabular-nums" id="tasbeeh-display-count">
               ${count}
             </div>
-            <div class="text-xs text-muted mt-1 font-semibold">
+            <div class="text-xs text-graphite mt-1 font-medium">
               ${target > 0 ? `الهدف: ${target}` : 'تسبيح حر'}
             </div>
           </div>
         </div>
-        <p class="text-xs text-muted mt-2">المس الدائرة في أي مكان للتسبيح</p>
+        <p class="text-xs text-graphite mt-3">انقر الدائرة في أي مكان للتسبيح</p>
       </div>
 
-      <!-- Controls: Minus, Reset, Sound & Vibrate Toggles with SVGs -->
+      <!-- Controls: Minus, Reset, Sound & Vibrate Toggles -->
       <div class="grid grid-cols-4 gap-2 max-w-sm mx-auto">
-        <button id="btn-tasbeeh-decrement" class="btn-touch bg-surface border border-subtle rounded-xl text-secondary hover:bg-surface-subtle text-sm font-bold flex items-center justify-center gap-1 shadow-xs" title="طرح واحدة">
+        <button id="btn-tasbeeh-decrement" class="btn-outlined-pill py-2 text-xs font-medium flex items-center justify-center gap-1 cursor-pointer" title="طرح واحدة">
           <span>-1</span>
         </button>
-        <button id="btn-tasbeeh-reset" class="btn-touch bg-surface border border-subtle rounded-xl text-secondary hover:bg-surface-subtle text-xs font-bold flex items-center justify-center gap-1 shadow-xs" title="تصفير العداد">
-          ${ICONS.rotate('w-3.5 h-3.5')}
+        <button id="btn-tasbeeh-reset" class="btn-outlined-pill py-2 text-xs font-medium flex items-center justify-center gap-1 cursor-pointer" title="تصفير العداد">
+          ${ICONS.rotateCcw('w-3.5 h-3.5')}
           <span>تصفير</span>
         </button>
-        <button id="btn-toggle-vibrate" class="btn-touch bg-surface border border-subtle rounded-xl ${t.vibrateEnabled ? 'text-primary border-primary bg-primary/5' : 'text-muted'} text-xs font-bold flex items-center justify-center gap-1 shadow-xs" title="الاهتزاز">
+        <button id="btn-toggle-vibrate" class="btn-outlined-pill py-2 ${t.vibrateEnabled ? 'border-obsidian text-obsidian bg-ash font-semibold' : 'text-graphite'} text-xs font-medium flex items-center justify-center gap-1 cursor-pointer" title="الاهتزاز">
           ${ICONS.vibrate('w-3.5 h-3.5')}
           <span>${t.vibrateEnabled ? 'مفعل' : 'معطل'}</span>
         </button>
-        <button id="btn-toggle-sound" class="btn-touch bg-surface border border-subtle rounded-xl ${t.soundEnabled ? 'text-primary border-primary bg-primary/5' : 'text-muted'} text-xs font-bold flex items-center justify-center gap-1 shadow-xs" title="الصوت">
+        <button id="btn-toggle-sound" class="btn-outlined-pill py-2 ${t.soundEnabled ? 'border-obsidian text-obsidian bg-ash font-semibold' : 'text-graphite'} text-xs font-medium flex items-center justify-center gap-1 cursor-pointer" title="الصوت">
           ${ICONS.volume('w-3.5 h-3.5', t.soundEnabled)}
           <span>${t.soundEnabled ? 'مفعل' : 'معطل'}</span>
         </button>
       </div>
 
       <!-- Lifetime Stats -->
-      <div class="card-luxury p-3 text-xs text-muted flex items-center justify-between">
-        <span class="flex items-center gap-1.5 font-medium text-secondary">
-          ${ICONS.sparkles('w-4 h-4 text-gold')}
+      <div class="card-luxury p-3 text-xs text-graphite flex items-center justify-between">
+        <span class="flex items-center gap-1.5 font-medium text-obsidian">
+          ${ICONS.sparkles('w-3.5 h-3.5 text-graphite')}
           <span>إجمالي التسبيح الكلي المسجل:</span>
         </span>
-        <span class="font-mono font-bold text-primary text-sm">${t.totalLifetimeCount} تسبيحة</span>
+        <span class="font-mono font-semibold text-obsidian text-sm">${t.totalLifetimeCount} تسبيحة</span>
       </div>
     </div>
   `;
@@ -1771,66 +2574,65 @@ function renderPrayerTimesDetailedView(): string {
     name: string;
     time: string;
     icon: string;
-    color: string;
     isNext: boolean;
   }> = [
-    { key: 'fajr', name: 'صلاة الفجر', time: p.fajr, icon: ICONS.islamicCrescent('w-5 h-5'), color: 'text-emerald-500', isNext: p.nextPrayer.name === 'fajr' },
-    { key: 'sunrise', name: 'شروق الشمس', time: p.sunrise, icon: ICONS.sunrise('w-5 h-5'), color: 'text-amber-500', isNext: p.nextPrayer.name === 'sunrise' },
-    { key: 'dhuhr', name: 'صلاة الظهر', time: p.dhuhr, icon: ICONS.sun('w-5 h-5'), color: 'text-amber-500', isNext: p.nextPrayer.name === 'dhuhr' },
-    { key: 'asr', name: 'صلاة العصر', time: p.asr, icon: ICONS.sun('w-5 h-5 opacity-80'), color: 'text-amber-600', isNext: p.nextPrayer.name === 'asr' },
-    { key: 'maghrib', name: 'صلاة المغرب', time: p.maghrib, icon: ICONS.sunset('w-5 h-5'), color: 'text-orange-500', isNext: p.nextPrayer.name === 'maghrib' },
-    { key: 'isha', name: 'صلاة العشاء', time: p.isha, icon: ICONS.moonStars('w-5 h-5'), color: 'text-indigo-400', isNext: p.nextPrayer.name === 'isha' },
+    { key: 'fajr', name: 'صلاة الفجر', time: p.fajr, icon: ICONS.islamicCrescent('w-4 h-4 text-graphite'), isNext: p.nextPrayer.name === 'fajr' },
+    { key: 'sunrise', name: 'شروق الشمس', time: p.sunrise, icon: ICONS.sunrise('w-4 h-4 text-graphite'), isNext: p.nextPrayer.name === 'sunrise' },
+    { key: 'dhuhr', name: 'صلاة الظهر', time: p.dhuhr, icon: ICONS.sun('w-4 h-4 text-graphite'), isNext: p.nextPrayer.name === 'dhuhr' },
+    { key: 'asr', name: 'صلاة العصر', time: p.asr, icon: ICONS.sun('w-4 h-4 text-graphite'), isNext: p.nextPrayer.name === 'asr' },
+    { key: 'maghrib', name: 'صلاة المغرب', time: p.maghrib, icon: ICONS.sunset('w-4 h-4 text-graphite'), isNext: p.nextPrayer.name === 'maghrib' },
+    { key: 'isha', name: 'صلاة العشاء', time: p.isha, icon: ICONS.moonStars('w-4 h-4 text-graphite'), isNext: p.nextPrayer.name === 'isha' },
   ];
 
   return `
     <div class="space-y-4">
       <!-- Header -->
       <div class="flex items-center justify-between">
-        <button id="btn-back-home" class="px-3 py-1.5 rounded-lg border border-subtle text-xs font-bold text-secondary flex items-center gap-1.5 hover:bg-surface-subtle transition-colors cursor-pointer">
+        <button id="btn-back-home" class="btn-outlined-pill py-1 px-3 text-xs font-medium text-obsidian flex items-center gap-1.5 cursor-pointer">
           ${ICONS.arrowRight('w-3.5 h-3.5')}
           <span>الرئيسية</span>
         </button>
-        <h2 class="font-bold text-base text-primary flex items-center gap-1.5">
-          ${ICONS.clock('w-4 h-4 text-gold')}
+        <h2 class="font-semibold text-base text-obsidian flex items-center gap-1.5">
+          ${ICONS.clock('w-4 h-4 text-graphite')}
           <span>مواقيت الصلاة والأذان</span>
         </h2>
-        <button id="btn-change-loc-from-prayer" class="text-xs text-primary underline font-semibold flex items-center gap-1 cursor-pointer">
-          ${ICONS.mapPin('w-3 h-3')}
+        <button id="btn-change-loc-from-prayer" class="text-xs text-obsidian underline font-medium flex items-center gap-1 cursor-pointer">
+          ${ICONS.mapPin('w-3 h-3 text-graphite')}
           <span>تغيير الموقع</span>
         </button>
       </div>
 
       <!-- Location Card -->
-      <div class="card-luxury p-3.5 bg-primary/10 border-primary/20 flex items-center justify-between text-xs">
+      <div class="card-luxury p-3.5 flex items-center justify-between text-xs">
         <div>
-          <div class="font-bold text-primary text-sm flex items-center gap-1.5">
-            ${ICONS.mapPin('w-4 h-4 text-primary')}
+          <div class="font-semibold text-obsidian text-sm flex items-center gap-1.5">
+            ${ICONS.mapPin('w-3.5 h-3.5 text-graphite')}
             <span>${state.selectedLocation.name}</span>
           </div>
-          <div class="text-muted mt-0.5">الحساب الفلكي: الهيئة المصرية العامة للمساحة (دقيق 100%)</div>
+          <div class="text-graphite mt-0.5">الحساب الفلكي: الهيئة المصرية العامة للمساحة</div>
         </div>
-        <div class="text-left font-mono text-[11px] text-muted">
+        <div class="text-left font-mono text-[11px] text-smoke">
           <div>Lat: ${state.selectedLocation.latitude.toFixed(2)}</div>
           <div>Lng: ${state.selectedLocation.longitude.toFixed(2)}</div>
         </div>
       </div>
 
-      <!-- Prominent Mu'adhin & Azan Action Card (تصميم فاخر بأيقونات SVG) -->
-      <div class="card-luxury p-4 sm:p-5 bg-gradient-to-r from-amber-500/15 via-gold/10 to-transparent border-2 border-gold/60 rounded-2xl space-y-3.5 shadow-md">
+      <!-- Prominent Mu'adhin & Azan Action Card -->
+      <div class="card-luxury p-4 sm:p-5 space-y-3.5">
         <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div class="flex items-center gap-3 min-w-0">
-            <div class="w-12 h-12 rounded-2xl bg-gold/25 border-2 border-gold/50 flex items-center justify-center text-gold shrink-0 shadow-sm">
-              ${ICONS.mic('w-6 h-6 text-gold')}
+            <div class="w-10 h-10 rounded-full bg-ash border border-hairline flex items-center justify-center text-obsidian shrink-0">
+              ${ICONS.mic('w-5 h-5')}
             </div>
             <div class="min-w-0">
-              <div class="text-[11px] text-muted font-bold flex items-center gap-1.5">
-                <span>صوت المؤذن الحالي لجميع الصلوات:</span>
-                <span class="text-[9px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                  ${ICONS.bell('w-2.5 h-2.5 text-emerald-500')}
+              <div class="text-[11px] text-graphite font-medium flex items-center gap-1.5">
+                <span>صوت المؤذن الحالي:</span>
+                <span class="text-[10px] bg-ash text-obsidian font-medium px-2 py-0.5 rounded-full border border-hairline inline-flex items-center gap-1">
+                  ${ICONS.bell('w-2.5 h-2.5 text-graphite')}
                   <span>مفعّل</span>
                 </span>
               </div>
-              <div class="text-sm sm:text-base font-black text-primary truncate mt-0.5">
+              <div class="text-sm font-semibold text-obsidian truncate mt-0.5">
                 ${MUADHIN_OPTIONS.find(m => m.id === alertSettings.globalSound)?.name || 'أذان الشيخ ناصر القطامي'}
               </div>
             </div>
@@ -1838,19 +2640,18 @@ function renderPrayerTimesDetailedView(): string {
 
           <button 
             id="btn-open-prayer-alerts-modal-from-detailed" 
-            class="w-full sm:w-auto bg-gradient-to-r from-amber-500 to-gold hover:brightness-110 text-slate-950 font-black text-xs sm:text-sm px-5 py-3 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2 shrink-0"
-            title="انقر لتغيير صوت المؤذن واختيار ناصر القطامي، ياسر الدوسري، مشاري العفاسي، المنشاوي..."
+            class="btn-filled-black w-full sm:w-auto py-2.5 px-4 text-xs font-medium cursor-pointer flex items-center justify-center gap-2 shrink-0"
+            title="انقر لتغيير صوت المؤذن واختيار ناصر القطامي، ياسر الدوسري، مشاري العفاسي..."
           >
-            ${ICONS.mic('w-4.5 h-4.5 text-slate-950')}
+            ${ICONS.mic('w-4 h-4')}
             <span>تغيير صوت المؤذن والأذان</span>
-            ${ICONS.bolt('w-3.5 h-3.5 text-slate-950')}
           </button>
         </div>
 
         <!-- Live Audio Test & Master Controls -->
-        <div class="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-subtle/50 text-xs">
-          <div class="text-[11px] text-muted flex items-center gap-1.5">
-            ${ICONS.info('w-3.5 h-3.5 text-gold shrink-0')}
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-hairline text-xs">
+          <div class="text-[11px] text-graphite flex items-center gap-1.5">
+            ${ICONS.info('w-3.5 h-3.5 text-graphite shrink-0')}
             <span>${MUADHIN_OPTIONS.find(m => m.id === alertSettings.globalSound)?.description || ''}</span>
           </div>
 
@@ -1858,17 +2659,17 @@ function renderPrayerTimesDetailedView(): string {
             ${isPlaying ? `
               <button 
                 id="btn-stop-azan-audio" 
-                class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer animate-pulse"
+                class="bg-obsidian text-paper text-xs font-medium px-4 py-1.5 rounded-full flex items-center gap-1.5 cursor-pointer"
               >
-                ${ICONS.stop('w-4 h-4')}
+                ${ICONS.stop('w-3.5 h-3.5')}
                 <span>إيقاف الأذان</span>
               </button>
             ` : `
               <button 
                 id="btn-test-global-azan" 
-                class="bg-primary hover:bg-primary-dark text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                class="btn-outlined-pill py-1.5 px-3.5 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
               >
-                ${ICONS.play('w-4 h-4')}
+                ${ICONS.play('w-3.5 h-3.5')}
                 <span>استماع وتجربة الأذان</span>
               </button>
             `}
@@ -1877,10 +2678,10 @@ function renderPrayerTimesDetailedView(): string {
       </div>
 
       <!-- Prayer Table with Individual Notification Switches -->
-      <div class="card-luxury overflow-hidden border border-subtle divide-y divide-subtle">
-        <div class="bg-surface-subtle px-3.5 py-2 text-[11px] font-bold text-muted flex items-center justify-between">
+      <div class="card-luxury overflow-hidden divide-y divide-hairline">
+        <div class="bg-ash px-3.5 py-2 text-[11px] font-medium text-graphite flex items-center justify-between">
           <span>الصلاة والموعد</span>
-          <span>حالة التنبيه وصوت الأذان</span>
+          <span>حالة التنبيه</span>
         </div>
 
         ${prayersList.map(item => {
@@ -1890,31 +2691,31 @@ function renderPrayerTimesDetailedView(): string {
           const preReminderText = cfg.preReminderMinutes > 0 ? `قبل ${cfg.preReminderMinutes}د` : 'عند الوقت';
 
           return `
-            <div class="p-3 sm:p-3.5 flex items-center justify-between gap-3 transition-colors ${item.isNext ? 'bg-primary/10 font-bold border-r-4 border-r-gold' : 'hover:bg-surface-subtle/50'}">
+            <div class="p-3 sm:p-3.5 flex items-center justify-between gap-3 transition-colors ${item.isNext ? 'bg-ash font-semibold' : 'hover:bg-ash/50'}">
               <!-- Right side: Name, Icon and Time -->
               <div class="flex items-center gap-2.5 min-w-0">
-                <span class="${item.color} shrink-0">${item.icon}</span>
+                <span class="shrink-0">${item.icon}</span>
                 <div>
-                  <div class="font-bold text-xs sm:text-sm text-primary flex items-center gap-1.5">
+                  <div class="font-medium text-xs sm:text-sm text-obsidian flex items-center gap-1.5">
                     <span>${item.name}</span>
-                    ${item.isNext ? `<span class="bg-gold/20 text-gold text-[10px] px-1.5 py-0.2 rounded font-bold">القادمة</span>` : ''}
+                    ${item.isNext ? `<span class="bg-obsidian text-paper text-[10px] px-1.5 py-0.2 rounded-full font-medium">القادمة</span>` : ''}
                   </div>
-                  <div class="text-[11px] text-muted font-medium mt-0.5">
-                    تنبيه: <span class="text-secondary font-semibold">${preReminderText}</span> · <span class="text-secondary">${cfg.sound === 'chime' ? 'نغمة هادئة' : (cfg.sound === 'silent' ? 'صامت' : muadhinName.replace('أذان ', ''))}</span>
+                  <div class="text-[11px] text-graphite font-normal mt-0.5">
+                    تنبيه: <span>${preReminderText}</span> · <span>${cfg.sound === 'chime' ? 'نغمة هادئة' : (cfg.sound === 'silent' ? 'صامت' : muadhinName.replace('أذان ', ''))}</span>
                   </div>
                 </div>
               </div>
 
               <!-- Left side: Prayer Time & Individual Switch Button -->
               <div class="flex items-center gap-3 shrink-0">
-                <span class="font-mono text-sm sm:text-base font-bold text-primary tabular-nums">${item.time}</span>
+                <span class="font-mono text-sm sm:text-base font-semibold text-obsidian tabular-nums">${item.time}</span>
                 
                 <button 
-                  class="btn-toggle-prayer-detailed px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${isEnabled ? 'bg-primary/15 border-primary/40 text-primary hover:bg-primary/25' : 'bg-surface-subtle border-subtle text-muted hover:text-primary'}"
+                  class="btn-toggle-prayer-detailed px-2.5 py-1 rounded-full border text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${isEnabled ? 'bg-obsidian text-paper border-obsidian' : 'border-hairline text-graphite hover:bg-ash'}"
                   data-prayer="${item.key}"
                   title="${isEnabled ? 'انقر لتعطيل التنبيه لهذه الصلاة' : 'انقر لتفعيل التنبيه لهذه الصلاة'}"
                 >
-                  ${isEnabled ? ICONS.bell('w-3.5 h-3.5 text-primary') : ICONS.bellOff('w-3.5 h-3.5 text-muted')}
+                  ${isEnabled ? ICONS.bell('w-3.5 h-3.5') : ICONS.bellOff('w-3.5 h-3.5')}
                   <span class="hidden sm:inline">${isEnabled ? 'مفعل' : 'معطل'}</span>
                 </button>
               </div>
@@ -1924,123 +2725,171 @@ function renderPrayerTimesDetailedView(): string {
       </div>
 
       <!-- Notes on offline calculation -->
-      <div class="card-luxury p-3 text-xs text-muted leading-relaxed">
-        <p class="font-semibold text-secondary mb-1">معايير الدقة والضبط الشرعي:</p>
-        <p>• زاوية الفجر: 19.5 درجة، زاوية العشاء: 17.5 درجة (معيار دار الإفتاء وهيئة المساحة المصرية).</p>
-        <p>• يعمل الحساب بدون إنترنت فلكياً 100%، ويتطابق مع التوقيت المحلي لمركز أبو كبير والمحافظات المصرية ومدينة Ankara.</p>
+      <div class="card-luxury p-3 text-xs text-graphite leading-relaxed">
+        <p class="font-medium text-obsidian mb-1">معايير الدقة والضبط الشرعي:</p>
+        <p>• معيار دار الإفتاء وهيئة المساحة المصرية (الفجر: 19.5°، العشاء: 17.5°).</p>
+        <p>• يعمل الحساب بدون إنترنت فلكياً 100%.</p>
       </div>
     </div>
   `;
 }
 
-// 7. Prayer Guide View (Learn Salah)
+// 7. Prayer Guide View (Learn Salah - نظام بطاقات الخطوات التالي والسابق)
 function renderPrayerGuideView(): string {
+  const totalSteps = PRAYER_GUIDE_STEPS.length;
+  const activeIndex = Math.min(Math.max(0, state.prayerGuideStepIndex), totalSteps - 1);
+  state.prayerGuideStepIndex = activeIndex;
+  const step = PRAYER_GUIDE_STEPS[activeIndex];
+
   return `
     <div class="space-y-4">
       <div class="flex items-center justify-between">
-        <button id="btn-back-home" class="px-3 py-1.5 rounded-lg border border-subtle text-xs font-bold text-secondary flex items-center gap-1 hover:bg-surface-subtle">
-          <span>←</span>
+        <button id="btn-back-home" class="btn-outlined-pill py-1 px-3 text-xs font-medium text-obsidian flex items-center gap-1.5 cursor-pointer">
+          ${ICONS.arrowRight('w-3.5 h-3.5')}
           <span>الرئيسية</span>
         </button>
-        <h2 class="font-bold text-base text-primary">دليل تعلم الصلاة والوضوء</h2>
-        <a href="https://islamhouse.com/ar/articles/2785501/" target="_blank" class="text-xs text-primary underline font-semibold">
-          المصدر
-        </a>
+        <h2 class="font-semibold text-base text-obsidian">صفة صلاة النبي ﷺ</h2>
+        <div class="text-xs font-mono text-graphite">الخطوة ${activeIndex + 1} من ${totalSteps}</div>
       </div>
 
-      <!-- Prayer Steps Banner Image -->
-      <div class="relative overflow-hidden rounded-2xl border border-gold/30 shadow-md">
-        <img src="/images/prayer_steps_banner.jpg" alt="تعليم الصلاة والوضوء" class="w-full h-36 object-cover" />
-        <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent flex flex-col justify-end p-3.5 text-white text-right">
-          <div class="text-xs text-gold font-bold flex items-center gap-1.5">
-            ${ICONS.islamicStar('w-3.5 h-3.5 text-gold')}
-            <span>صفة صلاة النبي ﷺ خطوة بخطوة</span>
+      <!-- Step Progress Bar -->
+      <div class="w-full bg-ash h-1.5 rounded-full overflow-hidden border border-hairline">
+        <div class="bg-obsidian h-full transition-all duration-300" style="width: ${((activeIndex + 1) / totalSteps) * 100}%;"></div>
+      </div>
+
+      <!-- Step Card Deck Item -->
+      <div class="card-deck-container" id="prayer-guide-deck-touch-area">
+        <div class="card-luxury p-4 sm:p-5 space-y-4">
+          <div class="flex items-center justify-between text-xs">
+            <span class="bg-ash text-obsidian font-mono px-2.5 py-0.5 rounded-full font-medium border border-hairline">
+              الخطوة ${step.stepNumber}
+            </span>
+            <span class="text-graphite font-medium bg-ash px-2.5 py-0.5 rounded-full border border-hairline">${step.ruling}</span>
           </div>
-          <div class="text-sm font-bold mt-0.5">شرح مصور تفاعلي بالسنن والأركان والأدعية الصحيحة</div>
-        </div>
-      </div>
 
-      <div class="card-luxury p-3 text-xs text-muted leading-relaxed">
-        شرح تعليمي تفاعلي لصفة صلاة النبي ﷺ خطوة بخطوة، مع الأذكار والأدعية المسنونة في كل ركن.
-      </div>
+          <div>
+            <h3 class="font-semibold text-base text-obsidian">${step.title}</h3>
+            <p class="text-xs text-graphite mt-0.5">${step.subtitle}</p>
+          </div>
 
-      <div class="space-y-3">
-        ${PRAYER_GUIDE_STEPS.map(step => `
-          <div class="card-luxury p-4 space-y-2 border-r-4 border-r-primary">
-            <div class="flex items-center justify-between text-xs">
-              <span class="bg-primary text-white font-mono px-2 py-0.5 rounded font-bold">
-                الخطوة ${step.stepNumber}
-              </span>
-              <span class="text-gold font-semibold">${step.ruling}</span>
-            </div>
+          <div class="text-xs sm:text-sm text-graphite leading-relaxed bg-ash p-3 rounded-[6px] border border-hairline">
+            ${step.description}
+          </div>
 
-            <h3 class="font-bold text-sm text-primary">${step.title}</h3>
-            <p class="text-xs text-muted">${step.subtitle}</p>
+          <!-- Dhikr Text -->
+          <div class="bg-ash p-3.5 rounded-[6px] border border-hairline font-amiri text-lg sm:text-xl text-obsidian leading-loose text-center font-semibold select-text">
+            ${step.dhikrText}
+          </div>
 
-            <div class="text-xs text-secondary leading-relaxed pt-1">
-              ${step.description}
-            </div>
-
-            <div class="bg-surface-subtle p-3 rounded-xl border border-subtle font-amiri text-base text-primary leading-loose text-right">
-              ${step.dhikrText}
-            </div>
-
-            <div class="text-[11px] text-muted flex items-center justify-between pt-1">
-              <span>المصدر: ${step.source}</span>
-              <a href="${step.sourceUrl}" target="_blank" class="text-primary hover:underline">
-                فتح المصدر الأصلي ↗
+          <!-- Source & Copy -->
+          <div class="text-[11px] text-graphite flex items-center justify-between pt-1 border-t border-hairline">
+            <span>المصدر: ${step.source}</span>
+            <div class="flex items-center gap-2">
+              <button class="btn-copy-text hover:text-obsidian flex items-center gap-1 text-[11px] cursor-pointer" data-copy="${step.title}\n${step.dhikrText} [${step.source}]">
+                ${ICONS.copy('w-3.5 h-3.5')}
+                <span>نسخ</span>
+              </button>
+              <a href="${step.sourceUrl}" target="_blank" rel="noopener noreferrer" class="text-obsidian hover:underline">
+                فتح المصدر ↗
               </a>
             </div>
           </div>
-        `).join('')}
+
+          <!-- Step Navigation Buttons: التالي والسابق -->
+          <div class="flex items-center justify-between gap-3 pt-2">
+            <button 
+              id="btn-prayer-guide-prev" 
+              class="btn-outlined-pill py-1.5 px-3.5 text-xs font-medium cursor-pointer ${activeIndex > 0 ? '' : 'opacity-40 pointer-events-none'}"
+              ${activeIndex === 0 ? 'disabled' : ''}
+            >
+              ${ICONS.arrowRight('w-3.5 h-3.5')}
+              <span>الخطوة السابقة</span>
+            </button>
+
+            <button 
+              id="btn-prayer-guide-next" 
+              class="btn-filled-black py-1.5 px-4 text-xs font-medium cursor-pointer"
+            >
+              <span>${activeIndex < totalSteps - 1 ? 'الخطوة التالية' : 'إتمام الدليل ✓'}</span>
+              ${ICONS.arrowLeft('w-3.5 h-3.5')}
+            </button>
+          </div>
+        </div>
       </div>
+      <p class="text-center text-[11px] text-graphite">اسحب يميناً ويساراً للتنقل بين خطوات الصلاة</p>
     </div>
   `;
 }
 
-// 8. Prayer Adhkar View (Chronological)
+// 8. Prayer Adhkar View (Chronological - نظام بطاقات التالي)
 function renderPrayerAdhkarView(): string {
+  const totalItems = PRAYER_ADHKAR_LIST.length;
+  const activeIndex = Math.min(Math.max(0, state.prayerAdhkarStepIndex), totalItems - 1);
+  state.prayerAdhkarStepIndex = activeIndex;
+  const item = PRAYER_ADHKAR_LIST[activeIndex];
+
   return `
     <div class="space-y-4">
       <div class="flex items-center justify-between">
-        <button id="btn-back-home" class="px-3 py-1.5 rounded-lg border border-subtle text-xs font-bold text-secondary flex items-center gap-1 hover:bg-surface-subtle">
-          <span>←</span>
+        <button id="btn-back-home" class="btn-outlined-pill py-1 px-3 text-xs font-medium text-obsidian flex items-center gap-1.5 cursor-pointer">
+          ${ICONS.arrowRight('w-3.5 h-3.5')}
           <span>الرئيسية</span>
         </button>
-        <h2 class="font-bold text-base text-primary">أذكار الصلاة المسنونة</h2>
-        <div class="w-12"></div>
+        <h2 class="font-semibold text-base text-obsidian">أذكار الصلاة المسنونة</h2>
+        <div class="text-xs font-mono text-graphite">الموضع ${activeIndex + 1} من ${totalItems}</div>
       </div>
 
-      <p class="text-xs text-muted">
-        الأذكار الصحيحة الواردة عن النبي ﷺ مرتبة تسلسلياً بحسب وقت الذكر في الصلاة.
-      </p>
+      <!-- Step Progress Bar -->
+      <div class="w-full bg-ash h-1.5 rounded-full overflow-hidden border border-hairline">
+        <div class="bg-obsidian h-full transition-all duration-300" style="width: ${((activeIndex + 1) / totalItems) * 100}%;"></div>
+      </div>
 
-      <div class="space-y-3">
-        ${PRAYER_ADHKAR_LIST.map(item => `
-          <div class="card-luxury p-4 space-y-2 border-r-4 border-r-gold">
-            <div class="flex items-center justify-between text-xs">
-              <span class="bg-gold/15 text-gold-dark font-bold px-2 py-0.5 rounded">
-                ${item.stage}
-              </span>
-              <button class="btn-copy-text text-muted hover:text-primary flex items-center gap-1 text-xs cursor-pointer" data-copy="${item.text}">
-                ${ICONS.copy('w-3 h-3')}
-                <span>نسخ</span>
-              </button>
-            </div>
-
-            <h3 class="font-bold text-sm text-primary">${item.stepName}</h3>
-
-            <div class="font-amiri text-lg text-primary leading-loose text-right bg-surface-subtle p-3 rounded-xl border border-subtle whitespace-pre-line">
-              ${item.text}
-            </div>
-
-            <div class="text-xs text-muted flex items-center justify-between">
-              <span>المصدر: ${item.source}</span>
-              ${item.notes ? `<span class="italic text-[11px]">${item.notes}</span>` : ''}
-            </div>
+      <!-- Prayer Dhikr Card Deck Item -->
+      <div class="card-deck-container" id="prayer-adhkar-deck-touch-area">
+        <div class="card-luxury p-4 sm:p-5 space-y-4">
+          <div class="flex items-center justify-between text-xs">
+            <span class="bg-ash text-obsidian font-medium px-2.5 py-0.5 rounded-full border border-hairline">
+              ${item.stage}
+            </span>
+            <button class="btn-copy-text hover:text-obsidian flex items-center gap-1 text-xs cursor-pointer" data-copy="${item.stepName}\n${item.text} [${item.source}]">
+              ${ICONS.copy('w-3.5 h-3.5')}
+              <span>نسخ</span>
+            </button>
           </div>
-        `).join('')}
+
+          <h3 class="font-semibold text-base text-obsidian">${item.stepName}</h3>
+
+          <div class="font-amiri text-lg sm:text-xl text-obsidian leading-loose text-center bg-ash p-4 rounded-[6px] border border-hairline font-semibold select-text">
+            ${item.text}
+          </div>
+
+          <div class="text-xs text-graphite flex items-center justify-between border-t border-hairline pt-2">
+            <span>المصدر: ${item.source}</span>
+            ${item.notes ? `<span class="text-[11px] text-graphite">${item.notes}</span>` : ''}
+          </div>
+
+          <!-- Navigation Buttons: التالي والسابق -->
+          <div class="flex items-center justify-between gap-3 pt-2">
+            <button 
+              id="btn-prayer-adhkar-prev" 
+              class="btn-outlined-pill py-1.5 px-3.5 text-xs font-medium cursor-pointer ${activeIndex > 0 ? '' : 'opacity-40 pointer-events-none'}"
+              ${activeIndex === 0 ? 'disabled' : ''}
+            >
+              ${ICONS.arrowRight('w-3.5 h-3.5')}
+              <span>السابق</span>
+            </button>
+
+            <button 
+              id="btn-prayer-adhkar-next" 
+              class="btn-filled-black py-1.5 px-4 text-xs font-medium cursor-pointer"
+            >
+              <span>${activeIndex < totalItems - 1 ? 'الموضع التالي' : 'العودة للبداية'}</span>
+              ${ICONS.arrowLeft('w-3.5 h-3.5')}
+            </button>
+          </div>
+        </div>
       </div>
+      <p class="text-center text-[11px] text-graphite">اسحب يميناً ويساراً للتنقل بين أذكار الصلاة</p>
     </div>
   `;
 }
@@ -2179,98 +3028,147 @@ function renderKhutbahsView(): string {
   `;
 }
 
-// 10. Faith View
+// 10. Faith View (ركائز الإيمان - نظام بطاقات التالي)
 function renderFaithView(): string {
   const f = FAITH_DATA;
+  const totalPillars = f.pillars.length;
+  const activeIndex = Math.min(Math.max(0, state.faithCardIndex), totalPillars - 1);
+  state.faithCardIndex = activeIndex;
+  const p = f.pillars[activeIndex];
+
   return `
     <div class="space-y-4">
       <div class="flex items-center justify-between">
-        <button id="btn-back-home" class="px-3 py-1.5 rounded-lg border border-subtle text-xs font-bold text-secondary flex items-center gap-1 hover:bg-surface-subtle">
-          <span>←</span>
+        <button id="btn-back-home" class="btn-outlined-pill py-1 px-3 text-xs font-medium text-obsidian flex items-center gap-1.5 cursor-pointer">
+          ${ICONS.arrowRight('w-3.5 h-3.5')}
           <span>الرئيسية</span>
         </button>
-        <h2 class="font-bold text-base text-primary">الإيمان بالله وأركانه الستة</h2>
-        <div class="w-12"></div>
+        <h2 class="font-semibold text-base text-obsidian">أركان الإيمان الستة</h2>
+        <div class="text-xs font-mono text-graphite">الركن ${activeIndex + 1} من ${totalPillars}</div>
       </div>
 
-      <!-- Definition Card -->
-      <div class="card-luxury p-4 border-r-4 border-r-primary space-y-2">
-        <h3 class="font-bold text-sm text-primary">${f.definition.title}</h3>
-        <p class="text-xs text-secondary leading-relaxed">${f.definition.meaning}</p>
-        <p class="font-amiri text-sm text-primary/90 mt-1">${f.definition.evidence}</p>
+      <!-- Step Progress Bar -->
+      <div class="w-full bg-ash h-1.5 rounded-full overflow-hidden border border-hairline">
+        <div class="bg-obsidian h-full transition-all duration-300" style="width: ${((activeIndex + 1) / totalPillars) * 100}%;"></div>
       </div>
 
-      <!-- 6 Pillars List -->
-      <div class="space-y-3">
-        ${f.pillars.map(p => `
-          <div class="card-luxury p-4 space-y-2.5">
-            <div class="flex items-center justify-between text-xs">
-              <span class="bg-primary/10 text-primary font-bold px-2 py-0.5 rounded">
-                الركن ${p.order}
-              </span>
-              <span class="text-muted">${p.source}</span>
-            </div>
+      <!-- Faith Pillar Card Deck Item -->
+      <div class="card-deck-container" id="faith-deck-touch-area">
+        <div class="card-luxury p-4 sm:p-5 space-y-4">
+          <div class="flex items-center justify-between text-xs">
+            <span class="bg-ash text-obsidian font-medium px-2.5 py-0.5 rounded-full border border-hairline">
+              الركن ${p.order}
+            </span>
+            <span class="text-graphite">${p.source}</span>
+          </div>
 
-            <h4 class="font-bold text-sm text-primary">${p.title}</h4>
-            <p class="text-xs text-secondary leading-relaxed">${p.definition}</p>
+          <h3 class="font-semibold text-base sm:text-lg text-obsidian">${p.title}</h3>
+          
+          <p class="text-xs sm:text-sm text-graphite leading-relaxed bg-ash p-3 rounded-[6px] border border-hairline">
+            ${p.definition}
+          </p>
 
-            <div class="bg-surface-subtle p-2.5 rounded-xl border border-subtle font-amiri text-xs text-primary leading-relaxed">
-              ${p.evidence}
-            </div>
+          <div class="bg-ash p-3.5 rounded-[6px] border border-hairline font-amiri text-sm sm:text-base text-obsidian text-center font-semibold select-text leading-loose">
+            ${p.evidence}
+          </div>
 
-            <ul class="text-xs text-secondary space-y-1 list-disc list-inside pt-1">
+          <div class="space-y-1.5 pt-1">
+            <div class="text-xs font-semibold text-obsidian">المعالم والآثار الإيمانية:</div>
+            <ul class="text-xs text-graphite space-y-1 list-disc list-inside">
               ${p.details.map(d => `<li>${d}</li>`).join('')}
             </ul>
           </div>
-        `).join('')}
+
+          <!-- Navigation Buttons: التالي والسابق -->
+          <div class="flex items-center justify-between gap-3 pt-2 border-t border-hairline">
+            <button 
+              id="btn-faith-card-prev" 
+              class="btn-outlined-pill py-1.5 px-3.5 text-xs font-medium cursor-pointer ${activeIndex > 0 ? '' : 'opacity-40 pointer-events-none'}"
+              ${activeIndex === 0 ? 'disabled' : ''}
+            >
+              ${ICONS.arrowRight('w-3.5 h-3.5')}
+              <span>الركن السابق</span>
+            </button>
+
+            <button 
+              id="btn-faith-card-next" 
+              class="btn-filled-black py-1.5 px-4 text-xs font-medium cursor-pointer"
+            >
+              <span>${activeIndex < totalPillars - 1 ? 'الركن التالي' : 'العودة للبداية'}</span>
+              ${ICONS.arrowLeft('w-3.5 h-3.5')}
+            </button>
+          </div>
+        </div>
       </div>
+      <p class="text-center text-[11px] text-graphite">اسحب يميناً ويساراً للتنقل بين أركان الإيمان</p>
     </div>
   `;
 }
 
-// 11. Fear and Hope View
+// 11. Fear and Hope View (الخوف والرجاء وطمأنينة القلب - نظام بطاقات التالي)
 function renderFearHopeView(): string {
+  const totalSections = FEAR_HOPE_CONTENT.length;
+  const activeIndex = Math.min(Math.max(0, state.fearHopeCardIndex), totalSections - 1);
+  state.fearHopeCardIndex = activeIndex;
+  const section = FEAR_HOPE_CONTENT[activeIndex];
+
   return `
     <div class="space-y-4">
       <div class="flex items-center justify-between">
-        <button id="btn-back-home" class="px-3 py-1.5 rounded-lg border border-subtle text-xs font-bold text-secondary flex items-center gap-1 hover:bg-surface-subtle">
-          <span>←</span>
+        <button id="btn-back-home" class="btn-outlined-pill py-1 px-3 text-xs font-medium text-obsidian flex items-center gap-1.5 cursor-pointer">
+          ${ICONS.arrowRight('w-3.5 h-3.5')}
           <span>الرئيسية</span>
         </button>
-        <h2 class="font-bold text-base text-primary">الخوف والرجاء وطمأنينة القلب</h2>
-        <div class="w-12"></div>
+        <h2 class="font-semibold text-base text-obsidian">الخوف والرجاء والسكينة</h2>
+        <div class="text-xs font-mono text-graphite">الباب ${activeIndex + 1} من ${totalSections}</div>
       </div>
 
-      <!-- Medical / Guidance Disclaimer Banner -->
-      <div class="card-luxury p-4 bg-amber-500/10 border-amber-500/30 text-xs space-y-1 text-secondary">
-        <div class="font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-          ${ICONS.alertTriangle('w-4 h-4 text-amber-600')}
-          <span>${MEDICAL_DISCLAIMER.title}</span>
-        </div>
-        <p class="leading-relaxed">${MEDICAL_DISCLAIMER.text}</p>
+      <!-- Step Progress Bar -->
+      <div class="w-full bg-ash h-1.5 rounded-full overflow-hidden border border-hairline">
+        <div class="bg-obsidian h-full transition-all duration-300" style="width: ${((activeIndex + 1) / totalSections) * 100}%;"></div>
       </div>
 
-      <!-- Content Sections -->
-      <div class="space-y-3">
-        ${FEAR_HOPE_CONTENT.map(section => `
-          <div class="card-luxury p-4 space-y-2 border-r-4 border-r-gold">
-            <h3 class="font-bold text-sm text-primary">${section.title}</h3>
-            <div class="text-xs text-secondary space-y-1.5 leading-relaxed">
-              ${section.content.map(p => `<p>• ${p}</p>`).join('')}
-            </div>
+      <!-- Fear & Hope Card Deck Item -->
+      <div class="card-deck-container" id="fearhope-deck-touch-area">
+        <div class="card-luxury p-4 sm:p-5 space-y-4">
+          <h3 class="font-semibold text-base sm:text-lg text-obsidian">${section.title}</h3>
 
-            ${section.evidence ? `
-              <div class="bg-surface-subtle p-2.5 rounded-xl border border-subtle font-amiri text-xs text-primary mt-1">
-                ${section.evidence}
-              </div>
-            ` : ''}
-
-            <div class="text-[11px] text-muted text-left">
-              المصدر: ${section.source}
-            </div>
+          <div class="text-xs sm:text-sm text-graphite space-y-2 leading-relaxed bg-ash p-3.5 rounded-[6px] border border-hairline">
+            ${section.content.map(p => `<p class="flex items-start gap-1.5"><span class="text-smoke shrink-0 mt-0.5">•</span><span>${p}</span></p>`).join('')}
           </div>
-        `).join('')}
+
+          ${section.evidence ? `
+            <div class="bg-ash p-3 rounded-[6px] border border-hairline font-amiri text-sm sm:text-base text-obsidian text-center font-semibold leading-loose">
+              ${section.evidence}
+            </div>
+          ` : ''}
+
+          <div class="text-[11px] text-graphite text-left border-t border-hairline pt-2">
+            المصدر: ${section.source}
+          </div>
+
+          <!-- Navigation Buttons: التالي والسابق -->
+          <div class="flex items-center justify-between gap-3 pt-2">
+            <button 
+              id="btn-fearhope-card-prev" 
+              class="btn-outlined-pill py-1.5 px-3.5 text-xs font-medium cursor-pointer ${activeIndex > 0 ? '' : 'opacity-40 pointer-events-none'}"
+              ${activeIndex === 0 ? 'disabled' : ''}
+            >
+              ${ICONS.arrowRight('w-3.5 h-3.5')}
+              <span>السابق</span>
+            </button>
+
+            <button 
+              id="btn-fearhope-card-next" 
+              class="btn-filled-black py-1.5 px-4 text-xs font-medium cursor-pointer"
+            >
+              <span>${activeIndex < totalSections - 1 ? 'الباب التالي' : 'العودة للبداية'}</span>
+              ${ICONS.arrowLeft('w-3.5 h-3.5')}
+            </button>
+          </div>
+        </div>
       </div>
+      <p class="text-center text-[11px] text-graphite">اسحب يميناً ويساراً للتنقل بين أبواب السكينة والرجاء</p>
     </div>
   `;
 }
@@ -2383,7 +3281,7 @@ function renderSearchModal(): string {
             type="text" 
             id="global-search-input" 
             value="${state.searchQuery}"
-            placeholder="ابحث عن آية، سورة، ذكر، خطبة، أو مسألة فقهية..." 
+            placeholder="ابحث عن ذكر، دعاء، خطبة، أو مسألة إيمانية..." 
             class="w-full bg-surface-subtle border border-subtle rounded-xl p-3 text-xs text-primary placeholder:text-muted focus:outline-none focus:border-primary font-cairo"
             autofocus
           />
@@ -2392,7 +3290,7 @@ function renderSearchModal(): string {
         <div class="flex-1 overflow-y-auto space-y-2 max-h-80" id="search-results-list">
           ${state.searchQuery.trim() === '' ? `
             <div class="text-center p-6 text-xs text-muted">
-              اكتب كلمة البحث للوصول الفوري إلى الآيات القرآنية والأذكار والخطب.
+              اكتب كلمة البحث للوصول الفوري إلى الأذكار النبوية والأدعية والخطب.
             </div>
           ` : (state.searchResults.length === 0 ? `
             <div class="text-center p-6 text-xs text-muted">
@@ -2421,184 +3319,190 @@ function renderMoreView(): string {
   return `
     <div class="space-y-4">
       <div>
-        <h2 class="text-base font-bold text-primary">الإعدادات والمصادر والمعلومات</h2>
-        <p class="text-xs text-muted">تخصيص التطبيق والتحكم في الخيارات</p>
+        <h2 class="text-base font-semibold text-obsidian">الإعدادات والمصادر</h2>
+        <p class="text-xs text-graphite">تخصيص التطبيق والتحكم في الخيارات</p>
       </div>
 
-      <!-- Connected Google Profile Card -->
+      <!-- Connected User Profile Card -->
       ${state.currentUser ? `
-        <div class="card-luxury p-3.5 bg-surface/95 border border-primary/20 rounded-2xl flex items-center justify-between shadow-xs">
-          <div class="flex items-center gap-3">
-            <div class="w-12 h-12 rounded-2xl overflow-hidden border-2 border-gold/40 flex items-center justify-center bg-primary/10 shrink-0">
-              ${state.currentUser.photoURL ? `
-                <img src="${state.currentUser.photoURL}" alt="${state.currentUser.displayName || ''}" class="w-full h-full object-cover" />
-              ` : `
-                ${ICONS.user('w-6 h-6 text-primary')}
-              `}
-            </div>
+        <div class="card-luxury p-4 flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3 min-w-0">
+            ${renderUserProfileAvatar(state.currentUser, 'w-12 h-12', 'w-6 h-6')}
             <div class="min-w-0">
-              <div class="font-bold text-sm text-primary flex items-center gap-1.5">
-                <span class="truncate">${state.currentUser.displayName || 'مستخدم Google'}</span>
+              <div class="font-bold text-xs sm:text-sm text-primary flex items-center gap-1.5">
+                <span class="truncate">${state.currentUser.displayName || 'مستخدم مسجل'}</span>
                 ${isAdmin ? `
-                  <span class="text-[10px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded-md font-extrabold shrink-0 flex items-center gap-1">
-                    ${ICONS.crown('w-3 h-3 text-slate-950')}
+                  <span class="text-[10px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full font-black shrink-0 flex items-center gap-1">
+                    ${ICONS.crown('w-3 h-3')}
                     <span>المسؤول</span>
                   </span>
                 ` : `
-                  <span class="text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded font-bold shrink-0">نشط</span>
+                  <span class="text-[10px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold shrink-0">نشط</span>
                 `}
               </div>
-              <div class="text-xs text-muted truncate">${state.currentUser.email || ''}</div>
+              <div class="text-[11px] text-muted truncate mt-0.5">${state.currentUser.email || ''}</div>
+              <button id="btn-edit-profile-settings" class="text-[11px] text-gold-dark dark:text-gold font-bold hover:underline mt-1 flex items-center gap-1 cursor-pointer">
+                <span>تعديل الصورة والاسم</span>
+                <span>←</span>
+              </button>
             </div>
           </div>
 
-          <button id="btn-logout-app" class="px-3 py-1.5 rounded-xl border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer shrink-0" title="تسجيل الخروج">
-            ${ICONS.logOut('w-3.5 h-3.5')}
-            <span>خروج</span>
-          </button>
+          <div class="flex flex-col items-end gap-1.5 shrink-0">
+            <button id="btn-edit-profile-btn" class="btn-outlined-pill px-3 py-1.5 text-xs font-bold cursor-pointer border-gold/40 text-gold-dark dark:text-gold hover:bg-gold/10 flex items-center gap-1" title="تعديل الملف الشخصي">
+              <span>تعديل</span>
+            </button>
+            <button id="btn-logout-app" class="text-[11px] text-red-500 hover:text-red-700 font-bold cursor-pointer transition-colors" title="تسجيل الخروج">
+              <span>خروج</span>
+            </button>
+          </div>
         </div>
       ` : ''}
 
       <!-- Admin Panel Shortcut Card (Visible to Admin Only) -->
       ${isAdmin ? `
-        <div class="card-luxury p-4 bg-gradient-to-r from-amber-500/20 via-gold/15 to-transparent border-2 border-gold/40 space-y-2 shadow-sm">
+        <div class="card-luxury p-4 space-y-2">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
-              <span class="p-2 rounded-xl bg-gold/20 text-gold">${ICONS.crown('w-5 h-5 text-gold')}</span>
+              <span class="p-1.5 rounded-full bg-ash text-obsidian">${ICONS.crown('w-4 h-4')}</span>
               <div>
-                <h3 class="font-bold text-sm text-primary">لوحة تحكم المسؤول (مالك عبدالودود)</h3>
-                <p class="text-[11px] text-muted">إدارة المشتركين، طلبات فودافون كاش، وحظر/فك حظر الحسابات</p>
+                <h3 class="font-semibold text-xs text-obsidian">لوحة تحكم المسؤول (مالك عبدالودود)</h3>
+                <p class="text-[11px] text-graphite">إدارة المشتركين وطلبات الدفع</p>
               </div>
             </div>
-            <span class="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 text-[10px] font-bold">Admin</span>
+            <span class="px-2 py-0.5 rounded-full bg-ash text-obsidian text-[10px] font-medium border border-hairline">Admin</span>
           </div>
-          <button id="btn-menu-admin" class="w-full bg-gradient-to-r from-amber-500 to-gold text-slate-950 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm hover:brightness-105 transition-all cursor-pointer">
-            ${ICONS.shield('w-4 h-4 text-slate-950')}
+          <button id="btn-menu-admin" class="w-full btn-filled-black py-2 text-xs font-medium cursor-pointer">
+            ${ICONS.shield('w-3.5 h-3.5')}
             <span>الدخول إلى لوحة إدارة المستخدمين والاشتراكات</span>
           </button>
         </div>
       ` : ''}
 
-      <!-- Subscription Status Card (Vodafone Cash) -->
-      <div class="card-luxury p-4 bg-gradient-to-r from-primary/10 via-gold/10 to-transparent border-primary/20 space-y-2">
+      <!-- Subscription Status Card -->
+      <div class="card-luxury p-4 space-y-2.5">
         <div class="flex items-center justify-between text-xs">
-          <span class="font-bold text-primary flex items-center gap-1.5">
-            ${ICONS.crown('w-4 h-4 text-gold')}
+          <span class="font-medium text-obsidian flex items-center gap-1.5">
+            ${ICONS.crown('w-4 h-4 text-graphite')}
             <span>باقة اذكار ، Ankara</span>
           </span>
-          <span class="font-bold ${sub.isActive ? 'text-emerald-600' : 'text-amber-600'}">
+          <span class="font-medium text-obsidian">
             ${sub.isSubscribed ? 'مشترك نشط' : (sub.isTrial ? 'فترة تجريبية مجانية' : 'منتهية')}
           </span>
         </div>
-        <p class="text-xs text-secondary leading-relaxed">
+        <p class="text-xs text-graphite leading-relaxed">
           ${sub.isActive 
-            ? `متبقي لك ${sub.daysRemaining} يوم و ${sub.hoursRemaining} ساعة للاستفادة الكاملة من كافة خصائص التطبيق.`
-            : `انتهت الفترة المجانية. اشترك الآن بـ ${SUBSCRIPTION_PRICE_EGP} جنيه شهرياً عبر فودافون كاش (${VODAFONE_CASH_LOCAL_NUMBER}).`
+            ? `متبقي لك ${sub.daysRemaining} يوم و ${sub.hoursRemaining} ساعة للاستفادة من كافة خصائص التطبيق.`
+            : `انتهت الفترة المجانية. اشترك الآن بـ ${SUBSCRIPTION_PRICE_EGP} جنيه شهرياً عبر انستاباي InstaPay (${INSTAPAY_LOCAL_NUMBER}).`
           }
         </p>
-        <button id="btn-open-paywall-details" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer">
-          ${ICONS.phone('w-3.5 h-3.5')}
-          <span>${sub.isSubscribed ? 'تفاصيل الاشتراك والتجديد' : `الدفع عبر فودافون كاش (${SUBSCRIPTION_PRICE_EGP} ج.م / شهر)`}</span>
+        <button id="btn-open-paywall-details" class="w-full btn-filled-black py-2.5 text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+          ${ICONS.instapay('w-4 h-4')}
+          <span>${sub.isSubscribed ? 'تفاصيل الاشتراك والتجديد' : `الدفع عبر InstaPay (${SUBSCRIPTION_PRICE_EGP} ج.م / شهر)`}</span>
         </button>
       </div>
 
-      <!-- Settings Menu List with SVGs -->
-      <div class="card-luxury divide-y divide-subtle overflow-hidden">
-        <button class="w-full p-4 flex items-center justify-between text-right hover:bg-surface-subtle transition-colors cursor-pointer bg-gradient-to-r from-amber-500/10 via-gold/5 to-transparent border-r-4 border-r-gold" id="btn-menu-prayer-alerts">
+      <!-- Settings Menu List -->
+      <div class="card-luxury divide-y divide-hairline overflow-hidden">
+        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-ash transition-colors cursor-pointer" id="btn-menu-prayer-alerts">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gold/25 text-gold flex items-center justify-center shrink-0">
-              ${ICONS.mic('w-5 h-5 text-gold')}
+            <div class="w-8 h-8 rounded-full bg-ash text-obsidian flex items-center justify-center shrink-0">
+              ${ICONS.mic('w-4 h-4')}
             </div>
             <div>
-              <div class="font-bold text-sm text-primary flex items-center gap-2">
+              <div class="font-medium text-xs sm:text-sm text-obsidian flex items-center gap-2">
                 <span>تغيير صوت المؤذن والأذان</span>
-                <span class="text-[10px] bg-gold text-slate-950 px-2 py-0.5 rounded font-black inline-flex items-center gap-1">
-                  ${ICONS.bell('w-2.5 h-2.5 text-slate-950')}
+                <span class="text-[10px] bg-ash text-obsidian px-2 py-0.5 rounded-full border border-hairline inline-flex items-center gap-1">
+                  ${ICONS.bell('w-2.5 h-2.5 text-graphite')}
                   <span>مفعّل</span>
                 </span>
               </div>
-              <div class="text-xs text-muted mt-0.5">المؤذن الحالي: ${MUADHIN_OPTIONS.find(m => m.id === state.prayerAlertsSettings.globalSound)?.name || 'أذان الشيخ ناصر القطامي'}</div>
+              <div class="text-[11px] text-graphite mt-0.5">المؤذن الحالي: ${MUADHIN_OPTIONS.find(m => m.id === state.prayerAlertsSettings.globalSound)?.name || 'أذان الشيخ ناصر القطامي'}</div>
             </div>
           </div>
-          <span class="text-gold font-bold text-xs bg-gold/20 px-3 py-1.5 rounded-xl border border-gold/30 shrink-0 inline-flex items-center gap-1">
-            <span>تغيير</span>
-            ${ICONS.bolt('w-3 h-3 text-gold')}
+          <span class="btn-outlined-pill px-3 py-1 text-xs font-medium shrink-0">
+            تغيير
           </span>
         </button>
 
-        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-surface-subtle transition-colors cursor-pointer" id="btn-menu-apple-sound-effects">
+        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-ash transition-colors cursor-pointer" id="btn-menu-apple-sound-effects">
           <div class="flex items-center gap-3">
-            <span class="text-primary">${ICONS.volume('w-5 h-5', audioFx.isSoundEnabled())}</span>
+            <span class="text-graphite">${ICONS.volume('w-4 h-4', audioFx.isSoundEnabled())}</span>
             <div>
-              <div class="font-semibold text-sm text-primary flex items-center gap-2">
-                <span>المؤثرات الصوتية وانتقالات Apple</span>
-                <span class="text-[10px] ${audioFx.isSoundEnabled() ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-surface-subtle text-muted'} px-2 py-0.5 rounded font-bold">
+              <div class="font-medium text-xs sm:text-sm text-obsidian flex items-center gap-2">
+                <span>المؤثرات الصوتية</span>
+                <span class="text-[10px] bg-ash text-graphite px-2 py-0.5 rounded-full border border-hairline font-medium">
                   ${audioFx.isSoundEnabled() ? 'مفعّل' : 'صامت'}
                 </span>
               </div>
-              <div class="text-xs text-muted">أصوات التسبيح، الأذكار، والتنقل السلس</div>
+              <div class="text-[11px] text-graphite">أصوات التسبيح والأذكار والتنقل</div>
             </div>
           </div>
-          <span class="text-xs font-bold ${audioFx.isSoundEnabled() ? 'text-primary' : 'text-muted'} bg-surface-subtle px-2.5 py-1 rounded-lg border border-subtle">
+          <span class="btn-outlined-pill px-2.5 py-0.5 text-xs font-medium">
             ${audioFx.isSoundEnabled() ? 'إيقاف' : 'تشغيل'}
           </span>
         </button>
 
-        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-surface-subtle transition-colors cursor-pointer" id="btn-menu-location">
+        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-ash transition-colors cursor-pointer" id="btn-menu-location">
           <div class="flex items-center gap-3">
-            <span class="text-primary">${ICONS.mapPin('w-5 h-5')}</span>
+            <span class="text-graphite">${ICONS.mapPin('w-4 h-4')}</span>
             <div>
-              <div class="font-semibold text-sm text-primary">تغيير الموقع الجغرافي</div>
-              <div class="text-xs text-muted">موقعك الحالي: ${state.selectedLocation.name}</div>
+              <div class="font-medium text-xs sm:text-sm text-obsidian">تغيير الموقع الجغرافي</div>
+              <div class="text-[11px] text-graphite">موقعك الحالي: ${state.selectedLocation.name}</div>
             </div>
           </div>
-          <span class="text-muted">${ICONS.chevronLeft('w-4 h-4')}</span>
+          <span class="text-smoke">${ICONS.chevronLeft('w-4 h-4')}</span>
         </button>
 
-        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-surface-subtle transition-colors cursor-pointer" id="btn-menu-favorites">
+        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-ash transition-colors cursor-pointer" id="btn-menu-favorites">
           <div class="flex items-center gap-3">
-            <span class="text-gold">${ICONS.star('w-5 h-5', true)}</span>
+            <span class="text-graphite">${ICONS.star('w-4 h-4', true)}</span>
             <div>
-              <div class="font-semibold text-sm text-primary">العناصر المفضلة</div>
-              <div class="text-xs text-muted">الآيات والأذكار والخطب المحفوظة</div>
+              <div class="font-medium text-xs sm:text-sm text-obsidian">العناصر المفضلة</div>
+              <div class="text-[11px] text-graphite">الأذكار والخطب المحفوظة</div>
             </div>
           </div>
-          <span class="text-muted">${ICONS.chevronLeft('w-4 h-4')}</span>
+          <span class="text-smoke">${ICONS.chevronLeft('w-4 h-4')}</span>
         </button>
 
-        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-surface-subtle transition-colors cursor-pointer" id="btn-menu-sources">
+        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-ash transition-colors cursor-pointer" id="btn-menu-sources">
           <div class="flex items-center gap-3">
-            <span class="text-primary">${ICONS.bookOpen('w-5 h-5')}</span>
+            <span class="text-graphite">${ICONS.bookOpen('w-4 h-4')}</span>
             <div>
-              <div class="font-semibold text-sm text-primary">المصادر والمراجع المعتمدة</div>
-              <div class="text-xs text-muted">Tanzil, Quran.com, IslamHouse, بن باز</div>
+              <div class="font-medium text-xs sm:text-sm text-obsidian">المصادر والمراجع المعتمدة</div>
+              <div class="text-[11px] text-graphite">مواقع الفتوى الرسمية وهيئة المساحة</div>
             </div>
           </div>
-          <span class="text-muted">${ICONS.chevronLeft('w-4 h-4')}</span>
+          <span class="text-smoke">${ICONS.chevronLeft('w-4 h-4')}</span>
         </button>
 
-        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-surface-subtle transition-colors cursor-pointer" id="btn-menu-appcreator">
+        <button class="w-full p-3.5 flex items-center justify-between text-right hover:bg-ash transition-colors cursor-pointer" id="btn-menu-appcreator">
           <div class="flex items-center gap-3">
-            <span class="text-primary">${ICONS.android('w-5 h-5')}</span>
+            <span class="text-graphite">${ICONS.android('w-4 h-4')}</span>
             <div>
-              <div class="font-semibold text-sm text-primary">تحويل التطبيق إلى Android</div>
-              <div class="text-xs text-muted">خطوات التشغيل عبر AppCreator24 وWebView</div>
+              <div class="font-medium text-xs sm:text-sm text-obsidian">تحويل التطبيق إلى Android</div>
+              <div class="text-[11px] text-graphite">خطوات التشغيل عبر AppCreator24 وWebView</div>
             </div>
           </div>
-          <span class="text-muted">${ICONS.chevronLeft('w-4 h-4')}</span>
+          <span class="text-smoke">${ICONS.chevronLeft('w-4 h-4')}</span>
         </button>
       </div>
 
       <!-- App Info & Supervisor Card -->
-      <div class="card-luxury p-4 text-center space-y-2 border-t-2 border-t-gold">
-        <img src="/images/app_logo.jpg" alt="Logo" class="w-14 h-14 rounded-2xl mx-auto border-2 border-gold/40 shadow-sm object-cover" />
-        <h3 class="font-bold text-sm text-primary">تطبيق اذكار ، Ankara الإصدار 1.0</h3>
-        <p class="text-xs text-secondary leading-relaxed">
-          «رفيقك اليومي للقرآن والذكر والعبادة»
+      <div class="card-luxury p-4 text-center space-y-2">
+        <div class="w-14 h-14 rounded-xl p-0.5 bg-gradient-to-tr from-emerald-800 to-amber-400 mx-auto shadow-md">
+          <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[10px] object-cover" />
+        </div>
+        <h3 class="font-semibold text-xs sm:text-sm text-obsidian flex items-center justify-center gap-1.5">
+          <span>تطبيق اذكار ، Ankara</span>
+          <span class="text-gold text-xs">۞</span>
+        </h3>
+        <p class="text-xs text-graphite leading-relaxed">
+          «رفيقك اليومي للأذكار النبوية والمسبحة الذكية ومواقيت الصلاة»
         </p>
-        <div class="bg-surface-subtle p-3 rounded-xl border border-subtle text-xs text-muted space-y-1">
-          <p>تم صنعه بواسطة: <span class="font-bold text-primary">المبرمج مالك عبدالودود وأحمد رضا الشبراوي</span></p>
-          <p>تحت إشراف: <span class="font-bold text-primary">الدكتور/الشيخ سعد محفوظ</span></p>
+        <div class="bg-ash p-3 rounded-[6px] border border-hairline text-xs text-graphite space-y-1">
+          <p>تم صنعه بواسطة: <span class="font-medium text-obsidian">المبرمج مالك عبدالودود وأحمد رضا الشبراوي</span></p>
+          <p>تحت إشراف: <span class="font-medium text-obsidian">الدكتور/الشيخ سعد محفوظ</span></p>
         </div>
       </div>
     </div>
@@ -2716,7 +3620,7 @@ function renderLocationModal(): string {
   `;
 }
 
-// 14. Paywall Modal (Vodafone Cash Payment Flow + WhatsApp)
+// 14. Paywall Modal (InstaPay Payment Flow + WhatsApp)
 function renderPaywallModal(): string {
   const sub = getSubscriptionStatus(state.currentUser?.email);
   const step = state.paywallStep || 1;
@@ -2727,184 +3631,201 @@ function renderPaywallModal(): string {
   );
 
   return `
-    <div class="fixed inset-0 z-[9999] bg-[#F7F6F3]/90 dark:bg-black/90 backdrop-blur-2xl flex flex-col p-4 sm:p-8 overflow-y-auto select-none font-cairo" id="paywall-modal-overlay">
-      <div class="max-w-lg w-full mx-auto my-auto space-y-6 bg-white/90 dark:bg-[#1C1C1E]/95 backdrop-blur-xl border border-black/5 dark:border-white/10 p-6 sm:p-8 rounded-[32px] shadow-2xl shadow-black/10">
+    <div class="fixed inset-0 z-[9999] bg-black/40 backdrop-blur-sm flex flex-col p-4 sm:p-6 overflow-y-auto select-none" id="paywall-modal-overlay">
+      <div class="max-w-lg w-full mx-auto my-auto space-y-4 bg-paper border border-hairline p-5 sm:p-6 rounded-[6px] shadow-sm">
         
         <!-- Header -->
-        <div class="flex items-center justify-between pb-4 border-b border-black/5 dark:border-white/10">
-          <div class="flex items-center gap-3.5">
-            <img src="/images/app_logo.jpg" alt="Logo" class="w-13 h-13 rounded-2xl object-cover shadow-md ring-1 ring-black/5" />
+        <div class="flex items-center justify-between pb-3 border-b border-hairline">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl p-0.5 bg-gradient-to-tr from-emerald-800 to-amber-400 shrink-0 shadow-sm">
+              <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[8px] object-cover" />
+            </div>
             <div>
-              <h3 class="font-extrabold text-base text-[#1D1D1F] dark:text-white tracking-tight">الاشتراك عبر فودافون كاش</h3>
-              <p class="text-xs text-secondary mt-0.5">
+              <h3 class="font-semibold text-sm sm:text-base text-obsidian">الاشتراك عبر InstaPay</h3>
+              <p class="text-xs text-graphite mt-0.5">
                 ${sub.isExpired ? 'انتهت فترة الـ 3 أيام التجريبية المجانية.' : 'فعّل حسابك للوصول الدائم لكافة المميزات.'}
               </p>
             </div>
           </div>
-          <button id="btn-close-paywall" class="w-9 h-9 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center text-secondary hover:text-[#1D1D1F] dark:hover:text-white transition-all cursor-pointer" title="إغلاق">
-            ${ICONS.close('w-5 h-5')}
+          <button id="btn-close-paywall" class="w-8 h-8 rounded-full border border-hairline flex items-center justify-center text-graphite hover:text-obsidian hover:bg-ash transition-colors cursor-pointer" title="إغلاق">
+            ${ICONS.close('w-4 h-4')}
           </button>
         </div>
 
-        <!-- Apple Segmented Control Step Indicators -->
-        <div class="grid grid-cols-3 gap-2 p-1.5 bg-black/5 dark:bg-white/5 rounded-2xl">
-          <div class="py-2.5 px-2 rounded-xl text-center text-xs font-bold transition-all ${step === 1 ? 'bg-[#0A4D3C] text-white shadow-sm' : 'text-secondary hover:text-[#1D1D1F] dark:hover:text-white'}">
-            ١. التحويل المالي
+        <!-- Segmented Control Step Indicators -->
+        <div class="grid grid-cols-3 gap-1.5 p-1 bg-ash rounded-full border border-hairline">
+          <div class="py-1.5 px-2 rounded-full text-center text-xs font-medium transition-all ${step === 1 ? 'bg-obsidian text-paper' : 'text-graphite'}">
+            ١. التحويل
           </div>
-          <div class="py-2.5 px-2 rounded-xl text-center text-xs font-bold transition-all ${step === 2 ? 'bg-[#0A4D3C] text-white shadow-sm' : 'text-secondary hover:text-[#1D1D1F] dark:hover:text-white'}">
-            ٢. رفع الإيصال
+          <div class="py-1.5 px-2 rounded-full text-center text-xs font-medium transition-all ${step === 2 ? 'bg-obsidian text-paper' : 'text-graphite'}">
+            ٢. الإيصال
           </div>
-          <div class="py-2.5 px-2 rounded-xl text-center text-xs font-bold transition-all ${step === 3 ? 'bg-[#0A4D3C] text-white shadow-sm' : 'text-secondary hover:text-[#1D1D1F] dark:hover:text-white'}">
-            ٣. الإرسال الموحد
-          </div>
-        </div>
-
-        <!-- Pricing Hero Card (Apple Card Style) -->
-        <div class="relative overflow-hidden p-6 rounded-[24px] bg-gradient-to-br from-[#0A4D3C] to-[#06382a] text-white shadow-lg shadow-[#0A4D3C]/20">
-          <div class="absolute -right-6 -bottom-6 w-32 h-32 bg-[#C9A86C]/15 rounded-full blur-2xl pointer-events-none"></div>
-          <div class="relative z-10 space-y-2">
-            <div>
-              <span class="inline-block px-3 py-1 rounded-full bg-[#C9A86C]/20 text-[#C9A86C] text-[11px] font-bold tracking-wide uppercase border border-[#C9A86C]/30">باقة الاشتراك الشهري</span>
-            </div>
-            <div class="text-2xl sm:text-3xl font-black tracking-tight tabular-nums flex items-baseline gap-1.5">
-              ${SUBSCRIPTION_PRICE_EGP} <span class="text-sm font-semibold opacity-80">جنيه مصري / شهر</span>
-            </div>
-            <p class="text-xs text-white/80 leading-relaxed font-light">30 يوماً متواصلة من القرآن والأذكار والمواقيت وبدون إعلانات</p>
+          <div class="py-1.5 px-2 rounded-full text-center text-xs font-medium transition-all ${step === 3 ? 'bg-obsidian text-paper' : 'text-graphite'}">
+            ٣. التأكيد
           </div>
         </div>
 
-        <!-- STEP 1 CARD -->
-        <div class="p-5 rounded-[24px] bg-black/[0.02] dark:bg-white/[0.02] border border-black/5 dark:border-white/10 space-y-4 ${step === 1 ? '' : 'hidden'}">
+        <!-- Pricing Hero Card -->
+        <div class="pricing-hero-card p-5 space-y-2">
+          <div>
+            <span class="pricing-badge">باقة الاشتراك الشهري</span>
+          </div>
+          <div class="pricing-amount">
+            ${SUBSCRIPTION_PRICE_EGP} <span class="text-sm font-normal text-graphite">جنيه مصري / شهر</span>
+          </div>
+          <p class="pricing-subtext">30 يوماً متواصلة من الأذكار والمواقيت والمسبحة وبدون إعلانات</p>
+        </div>
+
+        <!-- STEP 1 CARD: InstaPay Transfer -->
+        <div class="p-4 rounded-[6px] bg-ash border border-hairline space-y-3 ${step === 1 ? '' : 'hidden'}">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-bold text-[#1D1D1F] dark:text-white flex items-center gap-2">
-              <span class="w-6 h-6 rounded-full bg-[#0A4D3C] text-white text-[11px] flex items-center justify-center font-bold">1</span>
-              <span>الخطوة الأولى: تحويل القيمة لمحفظة فودافون كاش</span>
+            <span class="text-xs font-medium text-obsidian flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full bg-obsidian text-paper text-[11px] flex items-center justify-center font-medium">1</span>
+              <span>الخطوة الأولى: التحويل الفوري عبر تطبيق InstaPay</span>
             </span>
-            <span class="text-[10px] bg-red-500/10 text-red-600 px-2.5 py-0.5 rounded-full font-bold">Vodafone Cash</span>
+            <span class="text-[10px] bg-paper text-obsidian px-2.5 py-0.5 rounded-full font-medium border border-hairline flex items-center gap-1">
+              ${ICONS.instapay('w-3 h-3')}
+              <span>انستاباي مصر</span>
+            </span>
           </div>
 
-          <div class="p-4 bg-white dark:bg-[#2C2C2E] rounded-2xl border border-black/5 dark:border-white/10 flex items-center justify-between gap-3 shadow-xs">
+          <!-- InstaPay Mobile Number Card -->
+          <div class="p-3 bg-paper rounded-[6px] border border-hairline flex items-center justify-between gap-3">
             <div class="text-left font-mono">
-              <div class="font-extrabold text-base sm:text-lg text-[#1D1D1F] dark:text-white tracking-wider" dir="ltr">${VODAFONE_CASH_LOCAL_NUMBER}</div>
-              <div class="text-[11px] text-secondary" dir="ltr">${VODAFONE_CASH_NUMBER}</div>
+              <div class="text-[10px] text-graphite font-sans font-medium">رقم الهاتف للتحويل (InstaPay):</div>
+              <div class="font-semibold text-sm sm:text-base text-obsidian tracking-wider" dir="ltr">${INSTAPAY_LOCAL_NUMBER}</div>
+              <div class="text-[11px] text-graphite" dir="ltr">${INSTAPAY_NUMBER}</div>
             </div>
-            <button id="btn-copy-vodafone-num" class="px-4 py-2 rounded-xl bg-[#0A4D3C] text-white text-xs font-bold hover:bg-[#06382a] transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs">
-              ${ICONS.copy('w-4 h-4')}
+            <button id="btn-copy-vodafone-num" class="btn-filled-black py-1.5 px-3 text-xs font-medium cursor-pointer shrink-0">
+              ${ICONS.copy('w-3.5 h-3.5')}
               <span>نسخ الرقم</span>
             </button>
           </div>
-          <p class="text-xs text-secondary leading-relaxed">
-            حوّل مبلغ <strong class="text-[#1D1D1F] dark:text-white font-bold">100 جنيه</strong> إلى الرقم أعلاه من أي محفظة إلكترونية ثم اضغط على زر التالي أدناه.
+
+          <!-- InstaPay IPA / Username Card -->
+          <div class="p-3 bg-paper rounded-[6px] border border-hairline flex items-center justify-between gap-2 text-xs">
+            <div class="text-left font-mono">
+              <span class="text-[10px] text-graphite font-sans font-medium block">عنوان الدفع اللحظي (IPA):</span>
+              <span class="text-xs font-semibold text-obsidian font-mono" dir="ltr">${INSTAPAY_IPA}</span>
+            </div>
+            <button id="btn-copy-instapay-ipa" class="btn-outlined-pill py-1 px-2.5 text-[11px] font-medium cursor-pointer shrink-0">
+              ${ICONS.copy('w-3 h-3')}
+              <span>نسخ IPA</span>
+            </button>
+          </div>
+
+          <p class="text-xs text-graphite leading-relaxed">
+            افتح تطبيق <strong class="text-obsidian font-medium">InstaPay مصر</strong> وحوّل مبلغ <strong class="text-obsidian font-semibold">100 جنيه مصري</strong> إلى الرقم أعلاه، ثم اضغط على زر التالي لرفع إيصال التحويل.
           </p>
-          <button id="btn-paywall-next-1" class="w-full bg-[#0A4D3C] hover:bg-[#06382a] text-white py-3.5 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#0A4D3C]/20">
-            <span>التالي (رفع إيصال ImageKit)</span>
-            ${ICONS.chevronLeft('w-4 h-4')}
+          <button id="btn-paywall-next-1" class="w-full btn-filled-black py-2.5 text-xs font-medium cursor-pointer">
+            <span>التالي (رفع إيصال التحويل)</span>
+            ${ICONS.chevronLeft('w-3.5 h-3.5')}
           </button>
         </div>
 
-        <!-- STEP 2 CARD: ImageKit Secure Upload -->
-        <div class="p-5 rounded-[24px] bg-black/[0.02] dark:bg-white/[0.02] border border-black/5 dark:border-white/10 space-y-4 ${step === 2 ? '' : 'hidden'}">
+        <!-- STEP 2 CARD: Secure Receipt Upload -->
+        <div class="p-4 rounded-[6px] bg-ash border border-hairline space-y-3 ${step === 2 ? '' : 'hidden'}">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-bold text-[#1D1D1F] dark:text-white flex items-center gap-2">
-              <span class="w-6 h-6 rounded-full bg-[#0A4D3C] text-white text-[11px] flex items-center justify-center font-bold">2</span>
-              <span>الخطوة الثانية: رفع إيصال التحويل عبر ImageKit الآمن</span>
+            <span class="text-xs font-medium text-obsidian flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full bg-obsidian text-paper text-[11px] flex items-center justify-center font-medium">2</span>
+              <span>الخطوة الثانية: رفع إيصال التحويل</span>
             </span>
-            <span class="text-[10px] bg-emerald-500/10 text-emerald-600 px-2.5 py-0.5 rounded-full font-bold">ImageKit Secure CDN</span>
+            <span class="text-[10px] bg-paper text-obsidian px-2.5 py-0.5 rounded-full font-medium border border-hairline">إرفاق آمن</span>
           </div>
 
           <div class="space-y-3">
             <div>
-              <label class="block text-xs font-semibold text-secondary mb-1.5">رقم الهاتف المُحوَّل منه:</label>
+              <label class="block text-xs font-medium text-graphite mb-1">رقم الهاتف المُحوَّل منه:</label>
               <input 
                 type="tel" 
                 id="receipt-sender-phone" 
                 placeholder="مثال: 01012345678" 
-                class="w-full bg-white dark:bg-[#2C2C2E] border border-black/10 dark:border-white/10 rounded-2xl p-3 text-xs text-[#1D1D1F] dark:text-white font-mono focus:outline-none focus:border-[#0A4D3C] transition-all shadow-xs"
+                class="w-full bg-paper border border-hairline rounded-full py-2 px-3 text-xs text-obsidian font-mono focus:outline-none focus:border-obsidian"
               />
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-secondary mb-1.5">صورة إيصال التحويل (رفع مشفر عبر ImageKit):</label>
+              <label class="block text-xs font-medium text-graphite mb-1">صورة إيصال التحويل:</label>
               <input 
                 type="file" 
                 id="receipt-file-input" 
                 accept="image/*" 
-                class="w-full text-xs text-secondary file:mr-3 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-[#0A4D3C] file:text-white hover:file:bg-[#06382a] cursor-pointer bg-white dark:bg-[#2C2C2E] border border-black/10 dark:border-white/10 rounded-2xl p-2"
+                class="w-full text-xs text-graphite file:mr-2 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-medium file:bg-obsidian file:text-paper cursor-pointer bg-paper border border-hairline rounded-full p-1.5"
               />
             </div>
 
             <!-- Image Preview Box -->
-            <div id="receipt-preview-box" class="${state.receiptUploadPreview ? '' : 'hidden'} p-3 border border-dashed border-[#0A4D3C]/30 rounded-2xl bg-white dark:bg-[#2C2C2E] text-center shadow-xs">
-              <img id="receipt-preview-img" src="${state.receiptUploadPreview || ''}" alt="Receipt Preview" class="max-h-44 mx-auto rounded-xl object-contain" />
-              <div class="text-xs text-emerald-600 font-bold mt-2 flex items-center justify-center gap-1.5">
-                ${ICONS.check('w-4 h-4 text-emerald-600')}
-                <span>تم الرفع المشفر بنجاح عبر ImageKit</span>
+            <div id="receipt-preview-box" class="${state.receiptUploadPreview ? '' : 'hidden'} p-3 border border-dashed border-hairline rounded-[6px] bg-paper text-center">
+              <img id="receipt-preview-img" src="${state.receiptUploadPreview || ''}" alt="صورة الإيصال" class="max-h-40 mx-auto rounded-[4px] object-contain" />
+              <div class="text-xs text-obsidian font-medium mt-2 flex items-center justify-center gap-1.5">
+                ${ICONS.check('w-3.5 h-3.5 text-obsidian')}
+                <span>تم إرفاق الإيصال بنجاح</span>
               </div>
             </div>
           </div>
 
-          <div class="flex gap-3 pt-2">
-            <button id="btn-paywall-prev-2" class="px-5 py-3 rounded-2xl border border-black/10 dark:border-white/10 text-xs font-bold text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition-all cursor-pointer">
+          <div class="flex gap-2 pt-1">
+            <button id="btn-paywall-prev-2" class="btn-outlined-pill px-4 py-2 text-xs font-medium cursor-pointer">
               السابق
             </button>
-            <button id="btn-paywall-next-2" class="flex-1 bg-[#0A4D3C] hover:bg-[#06382a] text-white py-3 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#0A4D3C]/20">
-              <span>التالي (المراجعة والتأكيد الشامل)</span>
-              ${ICONS.chevronLeft('w-4 h-4')}
+            <button id="btn-paywall-next-2" class="flex-1 btn-filled-black py-2 text-xs font-medium cursor-pointer">
+              <span>التالي (المراجعة والتأكيد)</span>
+              ${ICONS.chevronLeft('w-3.5 h-3.5')}
             </button>
           </div>
         </div>
 
         <!-- STEP 3 CARD: Review & Unified Submission Button -->
-        <div class="p-5 rounded-[24px] bg-black/[0.02] dark:bg-white/[0.02] border border-black/5 dark:border-white/10 space-y-4 ${step === 3 ? '' : 'hidden'}">
+        <div class="p-4 rounded-[6px] bg-ash border border-hairline space-y-3 ${step === 3 ? '' : 'hidden'}">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-bold text-[#1D1D1F] dark:text-white flex items-center gap-2">
-              <span class="w-6 h-6 rounded-full bg-[#0A4D3C] text-white text-[11px] flex items-center justify-center font-bold">3</span>
-              <span>الخطوة الثالثة: مراجعة وإرسال الطلب الشامل</span>
+            <span class="text-xs font-medium text-obsidian flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full bg-obsidian text-paper text-[11px] flex items-center justify-center font-medium">3</span>
+              <span>الخطوة الثالثة: مراجعة وإرسال الطلب</span>
             </span>
-            <span class="text-[10px] bg-[#C9A86C]/15 text-[#C9A86C] px-2.5 py-0.5 rounded-full font-bold">إرسال موحد</span>
+            <span class="text-[10px] bg-paper text-obsidian px-2.5 py-0.5 rounded-full font-medium border border-hairline">إرسال موحد</span>
           </div>
 
-          <div class="p-4 bg-white dark:bg-[#2C2C2E] rounded-2xl border border-black/5 dark:border-white/10 text-xs space-y-2.5 text-right shadow-xs">
-            <div class="flex justify-between"><span class="text-secondary">صاحب الحساب:</span> <strong class="text-[#1D1D1F] dark:text-white font-medium">${state.currentUser?.displayName || 'مستخدم'}</strong></div>
-            <div class="flex justify-between"><span class="text-secondary">البريد الإلكتروني:</span> <strong class="text-[#1D1D1F] dark:text-white font-mono text-[11px]">${state.currentUser?.email || '—'}</strong></div>
-            <div class="flex justify-between"><span class="text-secondary">المبلغ:</span> <strong class="text-[#1D1D1F] dark:text-white font-medium">100 جنيه مصري</strong></div>
-            <div class="flex justify-between"><span class="text-secondary">حالة الإيصال:</span> <strong class="text-emerald-600 font-medium">جاهز ومرفوع عبر ImageKit</strong></div>
+          <div class="p-3.5 bg-paper rounded-[6px] border border-hairline text-xs space-y-2 text-right">
+            <div class="flex justify-between"><span class="text-graphite">صاحب الحساب:</span> <strong class="text-obsidian font-medium">${state.currentUser?.displayName || 'مستخدم'}</strong></div>
+            <div class="flex justify-between"><span class="text-graphite">البريد الإلكتروني:</span> <strong class="text-obsidian font-mono text-[11px]">${state.currentUser?.email || '—'}</strong></div>
+            <div class="flex justify-between"><span class="text-graphite">المبلغ:</span> <strong class="text-obsidian font-medium">100 جنيه مصري</strong></div>
+            <div class="flex justify-between"><span class="text-graphite">حالة الإيصال:</span> <strong class="text-obsidian font-medium">جاهز ومرفق</strong></div>
           </div>
 
-          <div class="space-y-3">
+          <div class="space-y-2 pt-1">
             <button 
               id="btn-submit-receipt-app" 
-              class="w-full bg-gradient-to-r from-[#0A4D3C] to-[#06382a] hover:opacity-95 text-white py-3.5 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#0A4D3C]/25 cursor-pointer"
+              class="w-full btn-filled-black py-3 text-xs font-medium cursor-pointer flex items-center justify-center gap-2"
             >
               ${ICONS.upload('w-4 h-4')}
-              <span>إرسال الطلب الموحد (للأدمن والواتساب معاً)</span>
+              <span>إرسال الطلب الموحد (للأدمن والواتساب)</span>
             </button>
           </div>
 
-          <div class="flex gap-3 pt-2">
-            <button id="btn-paywall-prev-3" class="w-full py-3 rounded-2xl border border-black/10 dark:border-white/10 text-xs font-bold text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition-all cursor-pointer">
+          <div class="flex gap-2 pt-1">
+            <button id="btn-paywall-prev-3" class="w-full btn-outlined-pill py-2 text-xs font-medium cursor-pointer">
               السابق
             </button>
           </div>
         </div>
 
         <!-- Manual Code / Voucher fallback -->
-        <div class="p-4 rounded-2xl bg-black/[0.02] dark:bg-white/[0.02] border border-black/5 dark:border-white/10 space-y-2.5">
-          <div class="text-xs text-secondary">أو أدخل كود التفعيل المباشر إذا كان لديك:</div>
+        <div class="p-3.5 rounded-[6px] bg-ash border border-hairline space-y-2">
+          <div class="text-xs text-graphite">أو أدخل كود التفعيل المباشر:</div>
           <div class="flex gap-2">
-            <input type="text" id="activation-code-input" placeholder="مثال: ZAD100" class="flex-1 bg-white dark:bg-[#2C2C2E] border border-black/10 dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white font-mono focus:outline-none focus:border-[#0A4D3C]" />
-            <button id="btn-activate-code" class="bg-[#0A4D3C] text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#06382a] transition-all cursor-pointer shadow-xs">
+            <input type="text" id="activation-code-input" placeholder="مثال: ZAD100" class="flex-1 bg-paper border border-hairline rounded-full px-3 py-1.5 text-xs text-obsidian font-mono focus:outline-none focus:border-obsidian" />
+            <button id="btn-activate-code" class="btn-filled-black px-4 py-1.5 text-xs font-medium cursor-pointer">
               تفعيل
             </button>
           </div>
         </div>
 
         <!-- Sandbox & Close Controls -->
-        <div class="border-t border-black/5 dark:border-white/10 pt-3 flex items-center justify-between text-xs text-secondary">
-          <button id="btn-test-trial-reset" class="hover:text-[#1D1D1F] dark:hover:text-white underline cursor-pointer transition-colors">
+        <div class="border-t border-hairline pt-3 flex items-center justify-between text-xs text-graphite">
+          <button id="btn-test-trial-reset" class="hover:text-obsidian underline cursor-pointer transition-colors">
             تجديد الـ 3 أيام التجريبية
           </button>
-          <button id="btn-close-paywall" class="font-bold text-[#1D1D1F] dark:text-white hover:opacity-80 cursor-pointer transition-opacity">
+          <button id="btn-close-paywall" class="font-medium text-obsidian hover:opacity-80 cursor-pointer">
             إغلاق
           </button>
         </div>
@@ -2913,7 +3834,7 @@ function renderPaywallModal(): string {
   `;
 }
 
-// 18. Subscription Full View (Vodafone Cash + Full Management)
+// 18. Subscription Full View (InstaPay + Full Management)
 function renderSubscriptionFullView(): string {
   const sub = getSubscriptionStatus(state.currentUser?.email);
   const whatsAppUrl = generateWhatsAppPaymentUrl(
@@ -2954,23 +3875,40 @@ function renderSubscriptionFullView(): string {
           <div class="pricing-amount tabular-nums">
             ${SUBSCRIPTION_PRICE_EGP} <span class="text-lg font-bold opacity-90">جنيه مصري / شهر</span>
           </div>
-          <div class="pricing-subtext">الدفع عبر محفظة فودافون كاش مباشرة للمسؤول</div>
+          <div class="pricing-subtext">الدفع اللحظي الفوري عبر تطبيق انستاباي InstaPay مصر</div>
         </div>
 
-        <!-- Vodafone Cash Direct Box -->
+        <!-- InstaPay Direct Box -->
         <div class="card-luxury p-4 bg-surface-subtle border border-subtle text-right space-y-3">
           <div class="flex items-center justify-between">
-            <span class="font-bold text-xs text-primary flex items-center gap-1">
-              ${ICONS.phone('w-4 h-4 text-red-500')}
-              <span>رقم فودافون كاش للتحويل:</span>
+            <span class="font-bold text-xs text-primary flex items-center gap-1.5">
+              ${ICONS.instapay('w-4 h-4 text-purple-600')}
+              <span>رقم انستاباي (InstaPay) للتحويل:</span>
             </span>
-            <button id="btn-copy-vodafone-num-page" class="px-2.5 py-1 rounded-lg bg-primary text-white text-[11px] font-bold hover:bg-primary-dark transition-colors flex items-center gap-1 cursor-pointer">
-              ${ICONS.copy('w-3 h-3')}
+            <span class="text-[10px] bg-purple-500/15 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded font-bold">تحويل لحظي فوري</span>
+          </div>
+
+          <div class="p-3 bg-surface rounded-2xl border border-subtle flex items-center justify-between gap-3 shadow-2xs">
+            <div class="text-left font-mono">
+              <div class="font-extrabold text-base sm:text-lg text-primary tracking-wider" dir="ltr">${INSTAPAY_LOCAL_NUMBER}</div>
+              <div class="text-[11px] text-muted" dir="ltr">${INSTAPAY_NUMBER}</div>
+            </div>
+            <button id="btn-copy-vodafone-num-page" class="px-3.5 py-1.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition-colors flex items-center gap-1 cursor-pointer">
+              ${ICONS.copy('w-3.5 h-3.5')}
               <span>نسخ الرقم</span>
             </button>
           </div>
-          <div class="p-2.5 bg-surface rounded-xl border border-subtle text-center font-mono font-extrabold text-base text-primary" dir="ltr">
-            ${VODAFONE_CASH_LOCAL_NUMBER} (${VODAFONE_CASH_NUMBER})
+
+          <!-- InstaPay IPA -->
+          <div class="p-3 bg-purple-500/5 dark:bg-purple-500/10 rounded-2xl border border-purple-500/20 flex items-center justify-between gap-2 text-xs">
+            <div class="text-left font-mono">
+              <span class="text-[10px] text-purple-700 dark:text-purple-300 font-sans font-bold block">عنوان الدفع اللحظي (IPA):</span>
+              <span class="text-xs font-bold text-primary font-mono" dir="ltr">${INSTAPAY_IPA}</span>
+            </div>
+            <button id="btn-copy-instapay-ipa-page" class="px-3 py-1.5 rounded-lg bg-purple-700 hover:bg-purple-800 text-white text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0">
+              ${ICONS.copy('w-3 h-3')}
+              <span>نسخ IPA</span>
+            </button>
           </div>
 
           <a 
@@ -2987,13 +3925,13 @@ function renderSubscriptionFullView(): string {
         <div class="card-luxury p-4 bg-surface/95 border border-subtle text-right space-y-2.5">
           <h4 class="font-bold text-xs text-primary flex items-center gap-1.5">
             ${ICONS.upload('w-4 h-4 text-primary')}
-            <span>إرفاق صورة الإيصال للمراجعة:</span>
+            <span>إرفاق صورة إيصال التحويل للمراجعة:</span>
           </h4>
 
           <input 
             type="tel" 
             id="receipt-sender-phone-page" 
-            placeholder="رقم الهاتف المُحوَّل منه (مثال: 011...)" 
+            placeholder="رقم الهاتف أو حساب InstaPay المُحوَّل منه..." 
             class="w-full bg-surface-subtle border border-subtle rounded-xl p-2.5 text-xs text-primary font-mono focus:outline-none focus:border-primary"
           />
 
@@ -3180,7 +4118,7 @@ function renderAdminView(): string {
         </div>
         <div class="card-luxury p-3 text-center bg-surface space-y-0.5 border-t-2 border-t-amber-500">
           <div class="text-lg font-extrabold text-amber-600">${pendingRequests.length}</div>
-          <div class="text-[10px] text-muted font-semibold">طلبات فودافون كاش المعلقة</div>
+          <div class="text-[10px] text-muted font-semibold">طلبات InstaPay المعلقة</div>
         </div>
         <div class="card-luxury p-3 text-center bg-surface space-y-0.5 border-t-2 border-t-emerald-500">
           <div class="text-lg font-extrabold text-emerald-600">${activeSubscribers.length}</div>
@@ -3192,14 +4130,14 @@ function renderAdminView(): string {
         </div>
       </div>
 
-      <!-- SECTION 1: Vodafone Cash Payment Requests -->
+      <!-- SECTION 1: InstaPay Payment Requests -->
       <div class="space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="font-bold text-sm text-primary flex items-center gap-1.5">
-            ${ICONS.phone('w-4 h-4 text-red-500')}
-            <span>طلبات دفع فودافون كاش (${paymentRequests.length})</span>
+            ${ICONS.instapay('w-4 h-4 text-purple-600')}
+            <span>طلبات دفع انستاباي InstaPay (${paymentRequests.length})</span>
           </h3>
-          <span class="text-xs text-muted">رقم الاستلام: <strong class="text-primary font-mono">${VODAFONE_CASH_LOCAL_NUMBER}</strong></span>
+          <span class="text-xs text-muted">رقم الاستلام: <strong class="text-primary font-mono">${INSTAPAY_LOCAL_NUMBER}</strong></span>
         </div>
 
         ${paymentRequests.length === 0 ? `
@@ -3311,13 +4249,7 @@ function renderAdminView(): string {
               <div class="card-luxury p-3 space-y-2 border ${u.status === 'banned' ? 'border-red-500/50 bg-red-500/5' : 'border-subtle'}">
                 <div class="flex items-center justify-between gap-2">
                   <div class="flex items-center gap-2.5 min-w-0">
-                    <div class="w-9 h-9 rounded-xl overflow-hidden border border-subtle flex items-center justify-center bg-primary/10 shrink-0">
-                      ${u.photoURL ? `
-                        <img src="${u.photoURL}" alt="" class="w-full h-full object-cover" />
-                      ` : `
-                        ${ICONS.user('w-4 h-4 text-primary')}
-                      `}
-                    </div>
+                    ${renderUserProfileAvatar(u, 'w-9 h-9', 'w-5 h-5')}
                     <div class="min-w-0">
                       <div class="font-bold text-xs text-primary flex items-center gap-1.5">
                         <span class="truncate">${u.displayName}</span>
@@ -3422,6 +4354,97 @@ function renderAdminView(): string {
   `;
 }
 
+// Stats & Streak Modal (إحصائيات الذكر والمواظبة اليومية والأسبوعية)
+function renderStatsModal(): string {
+  const stats = loadTasbeehStats();
+  const lifetime = (state.tasbeeh.totalLifetimeCount || 0) + (stats.todayCount || 0);
+
+  return `
+    <div class="modal-overlay" id="stats-modal-overlay" style="z-index: 9995;">
+      <div class="bottom-sheet-content space-y-4 text-right shadow-2xl" onclick="event.stopPropagation()">
+        <div class="apple-sheet-handle"></div>
+
+        <div class="flex items-center justify-between border-b border-subtle pb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-9 h-9 rounded-xl bg-gold/20 text-gold flex items-center justify-center font-bold text-base">
+              ${ICONS.sliders('w-5 h-5 text-gold')}
+            </div>
+            <div>
+              <h3 class="font-bold text-sm sm:text-base text-primary">إحصائيات الذكر والمواظبة</h3>
+              <p class="text-[11px] text-muted">سجل تسبيحك ووردك اليومي ومعدل الاستمرار</p>
+            </div>
+          </div>
+          <button id="btn-close-stats-modal" class="w-8 h-8 rounded-full bg-surface-subtle flex items-center justify-center text-secondary hover:text-primary transition-colors cursor-pointer" title="إغلاق">
+            ${ICONS.close('w-4 h-4')}
+          </button>
+        </div>
+
+        <!-- 3 KPI Cards -->
+        <div class="grid grid-cols-3 gap-2 text-center">
+          <div class="card-luxury p-3 space-y-1">
+            <div class="text-[10px] text-muted font-bold">تسبيحات اليوم</div>
+            <div class="text-xl sm:text-2xl font-black font-mono text-primary">${stats.todayCount.toLocaleString('ar-EG')}</div>
+            <div class="text-[9px] text-emerald-600 dark:text-emerald-400 font-semibold">اليوم المبارك</div>
+          </div>
+          <div class="card-luxury p-3 space-y-1 border-gold/40 bg-gold/5">
+            <div class="text-[10px] text-gold font-bold">أيام المواظبة</div>
+            <div class="text-xl sm:text-2xl font-black font-mono text-gold">${stats.streakDays.toLocaleString('ar-EG')} يوم</div>
+            <div class="text-[9px] text-gold font-semibold">استمرار الورد</div>
+          </div>
+          <div class="card-luxury p-3 space-y-1">
+            <div class="text-[10px] text-muted font-bold">مجموع الأسبوع</div>
+            <div class="text-xl sm:text-2xl font-black font-mono text-primary">${stats.weeklyCount.toLocaleString('ar-EG')}</div>
+            <div class="text-[9px] text-muted font-semibold">آخر 7 أيام</div>
+          </div>
+        </div>
+
+        <!-- 7-Day Chart -->
+        <div class="card-luxury p-3.5 space-y-2">
+          <div class="flex items-center justify-between text-xs font-bold text-primary">
+            <span>سجل نشاط آخر 7 أيام:</span>
+            <span class="text-[11px] font-mono text-gold">${stats.weeklyCount.toLocaleString('ar-EG')} تسبيحة</span>
+          </div>
+          <div class="grid grid-cols-7 gap-1 pt-3 items-end h-28 border-b border-subtle/50 pb-2">
+            ${[6, 5, 4, 3, 2, 1, 0].map(daysAgo => {
+              const d = new Date(Date.now() - daysAgo * 86400000);
+              const dateStr = d.toISOString().slice(0, 10);
+              const dayName = d.toLocaleDateString('ar-EG', { weekday: 'narrow' });
+              const cnt = daysAgo === 0 ? stats.todayCount : (stats.history[dateStr] || 0);
+              const maxVal = Math.max(20, stats.weeklyCount, ...Object.values(stats.history));
+              const heightPct = Math.max(12, Math.min(100, Math.round((cnt / maxVal) * 100)));
+              const isToday = daysAgo === 0;
+              return `
+                <div class="flex flex-col items-center gap-1 h-full justify-end">
+                  <div class="text-[9px] font-mono ${isToday ? 'text-gold font-bold' : 'text-muted'}">${cnt > 0 ? cnt : ''}</div>
+                  <div class="w-full rounded-t-lg transition-all ${isToday ? 'bg-gradient-to-t from-gold to-amber-400 shadow-xs' : 'bg-primary/30 hover:bg-primary/50'}" style="height: ${heightPct}%;"></div>
+                  <div class="text-[10px] font-bold ${isToday ? 'text-gold' : 'text-muted'}">${dayName}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- Total All Time -->
+        <div class="card-luxury p-3 flex items-center justify-between text-xs">
+          <span class="text-secondary font-bold">إجمالي التسبيحات المسجلة بالتطبيق:</span>
+          <span class="font-black font-mono text-sm text-primary">${lifetime.toLocaleString('ar-EG')} ذكر</span>
+        </div>
+
+        <!-- Motivational Verse -->
+        <div class="card-luxury p-3 text-center text-xs text-secondary leading-relaxed bg-surface-subtle font-amiri">
+          <p class="font-bold text-primary mb-0.5">﴿ وَالذَّاكِرِينَ اللَّهَ كَثِيرًا وَالذَّاكِرَاتِ أَعَدَّ اللَّهُ لَهُمْ مَغْفِرَةً وَأَجْرًا عَظِيمًا ﴾</p>
+          <p class="text-[11px] text-muted font-sans">حافظ على استمرار أيام المواظبة لنيل الأجر ومضاعفة الحسنات.</p>
+        </div>
+
+        <button id="btn-close-stats-footer" class="w-full py-2.5 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-xs shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5">
+          ${ICONS.check('w-4 h-4')}
+          <span>حفظ ومتابعة الذكر</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 // 22. Fullscreen Receipt Zoom Modal
 function renderReceiptImageModal(): string {
   if (!state.viewingReceiptImage) return '';
@@ -3429,7 +4452,10 @@ function renderReceiptImageModal(): string {
     <div class="modal-overlay" id="receipt-zoom-overlay" style="z-index: 9999;">
       <div class="card-luxury p-4 max-w-lg w-full max-h-[90vh] flex flex-col space-y-3 bg-surface" onclick="event.stopPropagation()">
         <div class="flex items-center justify-between border-b border-subtle pb-2">
-          <h3 class="font-bold text-sm text-primary">صورة إيصال التحويل (فودافون كاش)</h3>
+          <h3 class="font-bold text-sm text-primary flex items-center gap-1.5">
+            ${ICONS.instapay('w-4 h-4 text-purple-600')}
+            <span>صورة إيصال التحويل (InstaPay انستاباي)</span>
+          </h3>
           <button id="btn-close-receipt-zoom" class="w-8 h-8 rounded-full bg-surface-subtle flex items-center justify-center text-secondary hover:text-primary transition-colors cursor-pointer" title="إغلاق">${ICONS.close('w-4 h-4')}</button>
         </div>
         <div class="flex-1 overflow-auto flex items-center justify-center p-2 bg-slate-950/10 rounded-xl">
@@ -3691,6 +4717,8 @@ function renderPrayerAlertSettingsModal(): string {
   `;
 }
 
+
+
 // 24. Active Azan Playing Alert Dialog / Banner
 function renderActiveAzanDialog(): string {
   const alertInfo = state.activeAzanAlert;
@@ -3770,6 +4798,133 @@ function renderActiveAzanDialog(): string {
 
 // Event Bindings
 function attachEventHandlers() {
+  // Auth Tabs Switcher
+  document.querySelectorAll('.btn-auth-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = (btn as HTMLElement).dataset.authTab as 'login' | 'register' | 'forgot';
+      if (tab) {
+        audioFx.playAppleTap();
+        state.authTab = tab;
+        state.authError = null;
+        state.authSuccessMessage = null;
+        renderApp();
+      }
+    });
+  });
+
+  // Password Visibility Toggle
+  const togglePassBtn = document.getElementById('btn-toggle-password-visibility');
+  if (togglePassBtn) {
+    togglePassBtn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      state.showPasswordToggle = !state.showPasswordToggle;
+      renderApp();
+    });
+  }
+
+  // Email & Password Login Form
+  const loginForm = document.getElementById('form-auth-login');
+  if (loginForm) {
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const emailInput = document.getElementById('login-email-input') as HTMLInputElement;
+      const passInput = document.getElementById('login-password-input') as HTMLInputElement;
+      const email = emailInput?.value.trim();
+      const pass = passInput?.value.trim();
+
+      if (!email || !pass) {
+        state.authError = 'يرجى إدخال البريد الإلكتروني وكلمة المرور';
+        renderApp();
+        return;
+      }
+
+      try {
+        state.isSigningIn = true;
+        state.authError = null;
+        state.authSuccessMessage = null;
+        renderApp();
+
+        const user = await loginWithEmailPassword(email, pass);
+        handlePostLoginRedirect(user);
+      } catch (err: any) {
+        state.isSigningIn = false;
+        state.authError = err?.message || 'البريد الإلكتروني أو كلمة المرور غير صحيحة';
+        renderApp();
+      }
+    });
+  }
+
+  // Email & Password Register Form
+  const registerForm = document.getElementById('form-auth-register');
+  if (registerForm) {
+    registerForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nameInput = document.getElementById('register-name-input') as HTMLInputElement;
+      const emailInput = document.getElementById('register-email-input') as HTMLInputElement;
+      const passInput = document.getElementById('register-password-input') as HTMLInputElement;
+      const name = nameInput?.value.trim() || 'مستخدم جديد';
+      const email = emailInput?.value.trim();
+      const pass = passInput?.value.trim();
+
+      if (!email || !pass) {
+        state.authError = 'يرجى إدخال كافة البيانات المطلوبة';
+        renderApp();
+        return;
+      }
+
+      if (pass.length < 6) {
+        state.authError = 'كلمة المرور يجب أن لا تقل عن 6 أحرف أو أرقام';
+        renderApp();
+        return;
+      }
+
+      try {
+        state.isSigningIn = true;
+        state.authError = null;
+        state.authSuccessMessage = null;
+        renderApp();
+
+        const user = await registerWithEmailPassword(name, email, pass);
+        handlePostLoginRedirect(user);
+      } catch (err: any) {
+        state.isSigningIn = false;
+        state.authError = err?.message || 'تعذر إنشاء الحساب، يرجى المحاولة ببريد آخر';
+        renderApp();
+      }
+    });
+  }
+
+  // Forgot Password Form
+  const forgotForm = document.getElementById('form-auth-forgot');
+  if (forgotForm) {
+    forgotForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const emailInput = document.getElementById('forgot-email-input') as HTMLInputElement;
+      const email = emailInput?.value.trim();
+
+      if (!email) {
+        state.authError = 'يرجى إدخال البريد الإلكتروني';
+        renderApp();
+        return;
+      }
+
+      try {
+        state.isSigningIn = true;
+        state.authError = null;
+        renderApp();
+
+        await resetUserPassword(email);
+        state.isSigningIn = false;
+        state.authSuccessMessage = `تم إرسال رابط استعادة كلمة المرور إلى (${email}) بنجاح. تفقد بريدك الوارد.`;
+        renderApp();
+      } catch (err: any) {
+        state.isSigningIn = false;
+        state.authError = err?.message || 'تعذر إرسال رابط الاستعادة، يرجى التحقق من صحة البريد.';
+        renderApp();
+      }
+    });
+  }
+
   // Google Login Handler (Mandatory Auth Gate)
   const googleLoginBtn = document.getElementById('btn-google-login-action');
   if (googleLoginBtn) {
@@ -3784,7 +4939,7 @@ function attachEventHandlers() {
       } catch (err: any) {
         state.isSigningIn = false;
         state.authErrorCode = err?.code || null;
-        state.authError = err?.message || 'تعذر تسجيل الدخول عبر Google. يرجى المحاولة مجدداً.';
+        state.authError = err?.message || 'تعذر تسجيل الدخول عبر Google. يمكنك الدخول بالبريد أو الدخول الفوري.';
         renderApp();
       }
     });
@@ -3830,10 +4985,18 @@ function attachEventHandlers() {
 
   // Navigation tabs
   document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
       const el = btn as HTMLElement;
       const tab = el.dataset.nav as AppState['currentTab'];
       const subview = el.dataset.subview;
+      
+      const bottomNav = el.closest('.bottom-nav') as HTMLElement;
+      if (bottomNav) {
+        const itemLeft = el.offsetLeft - bottomNav.offsetLeft;
+        const targetScroll = itemLeft - (bottomNav.clientWidth / 2) + (el.clientWidth / 2);
+        bottomNav.scrollTo({ left: Math.max(0, targetScroll), behavior: 'smooth' });
+      }
+
       if (tab) {
         navigateTo(tab, null);
       } else if (subview) {
@@ -3842,7 +5005,7 @@ function attachEventHandlers() {
     });
   });
 
-  // Home actions
+  // Home actions & section navigation
   document.querySelectorAll('[data-action]').forEach(el => {
     el.addEventListener('click', () => {
       const action = (el as HTMLElement).dataset.action;
@@ -3852,7 +5015,7 @@ function attachEventHandlers() {
       if (action === 'nav-more') navigateTo('more');
       if (action === 'open-subview') {
         const view = (el as HTMLElement).dataset.view;
-        if (view) navigateTo(state.currentTab, view);
+        if (view) navigateTo('home', view);
       }
       if (action === 'open-adhkar-category') {
         const cat = (el as HTMLElement).dataset.cat;
@@ -3861,6 +5024,202 @@ function attachEventHandlers() {
           navigateTo('adhkar');
         }
       }
+    });
+  });
+
+  // Home filter tabs
+  document.querySelectorAll('.btn-filter-home-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      const tab = (btn as HTMLElement).dataset.tab as any;
+      if (tab) {
+        state.homeFilterTab = tab;
+        renderApp();
+      }
+    });
+  });
+
+  // Quran mode switches
+  document.querySelectorAll('.btn-switch-quran-mode').forEach(btn => {
+    btn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      const mode = (btn as HTMLElement).dataset.mode as any;
+      if (mode) {
+        state.quranMode = mode;
+        state.activeSurah = null;
+        renderApp();
+      }
+    });
+  });
+
+  // Surah filter by revelation type
+  document.querySelectorAll('.btn-filter-surah-type').forEach(btn => {
+    btn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      const t = (btn as HTMLElement).dataset.type as any;
+      if (t) {
+        state.surahFilterType = t;
+        renderApp();
+      }
+    });
+  });
+
+  // Surah search inputs
+  const surahSearchInp = document.getElementById('input-surah-search') as HTMLInputElement;
+  if (surahSearchInp) {
+    surahSearchInp.addEventListener('input', () => {
+      state.surahSearchQuery = surahSearchInp.value;
+      renderApp();
+    });
+  }
+  const clearSurahSearchBtn = document.getElementById('btn-clear-surah-search');
+  if (clearSurahSearchBtn) {
+    clearSurahSearchBtn.addEventListener('click', () => {
+      state.surahSearchQuery = '';
+      renderApp();
+    });
+  }
+
+  // Open surah in continuous reader
+  document.querySelectorAll('.btn-open-surah-reader').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const num = parseInt((btn as HTMLElement).dataset.surahNum || '1', 10);
+      audioFx.playAppleTransition();
+      const meta = SURAH_LIST.find(s => s.number === num) || {
+        number: num,
+        name: `سورة ${num}`,
+        englishName: `Surah ${num}`,
+        numberOfAyahs: 1,
+        revelationType: 'Meccan' as const,
+        revelationTypeArabic: 'مكية',
+        juz: 1
+      };
+      loadSurahAyahs(num).then(ayahs => {
+        state.activeSurah = { meta, ayahs };
+        state.quranMode = 'surahs';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        renderApp();
+      }).catch(() => {
+        alert('تعذر تحميل آيات السورة، يرجى المحاولة مرة أخرى.');
+      });
+    });
+  });
+
+  // Jump to Mushaf Page directly
+  document.querySelectorAll('.btn-jump-to-mushaf-page').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const p = parseInt((btn as HTMLElement).dataset.page || '1', 10);
+      audioFx.playAppleTap();
+      state.mushafPageNumber = p;
+      state.quranMode = 'mushaf';
+      state.mushafPageData = null;
+      state.selectedAyah = null;
+      state.activeSurah = null;
+      localStorage.setItem('zad_last_mushaf_page', p.toString());
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      renderApp();
+    });
+  });
+
+  // Focus Mode toggles
+  document.querySelectorAll('#btn-toggle-focus-mode, #btn-hero-focus-mode').forEach(btn => {
+    btn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      state.isFocusMode = !state.isFocusMode;
+      renderApp();
+    });
+  });
+  const exitFocusBtn = document.getElementById('btn-exit-focus-mode');
+  if (exitFocusBtn) {
+    exitFocusBtn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      state.isFocusMode = false;
+      renderApp();
+    });
+  }
+
+  // Kids Mode toggles
+  const heroKidsBtn = document.getElementById('btn-hero-kids-mode');
+  if (heroKidsBtn) {
+    heroKidsBtn.addEventListener('click', () => {
+      audioFx.playAppleSheetOpen();
+      state.kidsMode = true;
+      localStorage.setItem('zad_kids_mode', 'true');
+      renderApp();
+    });
+  }
+  const exitKidsBtn = document.getElementById('btn-exit-kids-mode');
+  if (exitKidsBtn) {
+    exitKidsBtn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      state.kidsMode = false;
+      localStorage.setItem('zad_kids_mode', 'false');
+      renderApp();
+    });
+  }
+
+  // Stats Modal toggles
+  const heroStatsBtn = document.getElementById('btn-open-stats-modal');
+  if (heroStatsBtn) {
+    heroStatsBtn.addEventListener('click', () => {
+      audioFx.playAppleSheetOpen();
+      state.showStatsModal = true;
+      renderApp();
+    });
+  }
+  const closeStatsBtn = document.getElementById('btn-close-stats-modal');
+  if (closeStatsBtn) {
+    closeStatsBtn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      state.showStatsModal = false;
+      renderApp();
+    });
+  }
+
+  // Ayah modal sub-tabs (Tafseer & Translation)
+  document.querySelectorAll('.btn-ayah-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const tabName = (tab as HTMLElement).dataset.tab as 'tafseer' | 'translation';
+      if (tabName) {
+        audioFx.playAppleTap();
+        state.activeAyahModalTab = tabName;
+        renderApp();
+      }
+    });
+  });
+
+  // Ayah Audio player
+  document.querySelectorAll('.btn-play-ayah-audio').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const url = (btn as HTMLElement).dataset.audioUrl;
+      if (!url) return;
+      if (ayahAudioElement && !ayahAudioElement.paused) {
+        ayahAudioElement.pause();
+        state.isAyahAudioPlaying = false;
+        renderApp();
+        return;
+      }
+      if (!ayahAudioElement) {
+        ayahAudioElement = new Audio();
+        ayahAudioElement.onended = () => {
+          state.isAyahAudioPlaying = false;
+          renderApp();
+        };
+        ayahAudioElement.onerror = () => {
+          state.isAyahAudioPlaying = false;
+          renderApp();
+        };
+      }
+      ayahAudioElement.src = url;
+      ayahAudioElement.play().then(() => {
+        state.isAyahAudioPlaying = true;
+        renderApp();
+      }).catch(() => {
+        state.isAyahAudioPlaying = false;
+        renderApp();
+      });
     });
   });
 
@@ -4598,14 +5957,14 @@ function attachEventHandlers() {
     });
   }
 
-  // Copy Vodafone Number Buttons
+  // Copy InstaPay Number & IPA Buttons
   const copyVodafoneBtn = document.getElementById('btn-copy-vodafone-num');
   if (copyVodafoneBtn) {
     copyVodafoneBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(VODAFONE_CASH_LOCAL_NUMBER).then(() => {
+      navigator.clipboard.writeText(INSTAPAY_LOCAL_NUMBER).then(() => {
         copyVodafoneBtn.textContent = 'تم النسخ ✓';
         setTimeout(() => {
-          if (copyVodafoneBtn) copyVodafoneBtn.innerHTML = `${ICONS.copy('w-3.5 h-3.5')}<span>نسخ الرقم</span>`;
+          if (copyVodafoneBtn) copyVodafoneBtn.innerHTML = `${ICONS.copy('w-4 h-4')}<span>نسخ الرقم</span>`;
         }, 2000);
       });
     });
@@ -4614,10 +5973,34 @@ function attachEventHandlers() {
   const copyVodafonePageBtn = document.getElementById('btn-copy-vodafone-num-page');
   if (copyVodafonePageBtn) {
     copyVodafonePageBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(VODAFONE_CASH_LOCAL_NUMBER).then(() => {
+      navigator.clipboard.writeText(INSTAPAY_LOCAL_NUMBER).then(() => {
         copyVodafonePageBtn.textContent = 'تم النسخ ✓';
         setTimeout(() => {
-          if (copyVodafonePageBtn) copyVodafonePageBtn.innerHTML = `${ICONS.copy('w-3 h-3')}<span>نسخ الرقم</span>`;
+          if (copyVodafonePageBtn) copyVodafonePageBtn.innerHTML = `${ICONS.copy('w-3.5 h-3.5')}<span>نسخ الرقم</span>`;
+        }, 2000);
+      });
+    });
+  }
+
+  const copyIpaBtn = document.getElementById('btn-copy-instapay-ipa');
+  if (copyIpaBtn) {
+    copyIpaBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(INSTAPAY_IPA).then(() => {
+        copyIpaBtn.textContent = 'تم النسخ ✓';
+        setTimeout(() => {
+          if (copyIpaBtn) copyIpaBtn.innerHTML = `${ICONS.copy('w-3 h-3')}<span>نسخ IPA</span>`;
+        }, 2000);
+      });
+    });
+  }
+
+  const copyIpaPageBtn = document.getElementById('btn-copy-instapay-ipa-page');
+  if (copyIpaPageBtn) {
+    copyIpaPageBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(INSTAPAY_IPA).then(() => {
+        copyIpaPageBtn.textContent = 'تم النسخ ✓';
+        setTimeout(() => {
+          if (copyIpaPageBtn) copyIpaPageBtn.innerHTML = `${ICONS.copy('w-3 h-3')}<span>نسخ IPA</span>`;
         }, 2000);
       });
     });
@@ -4633,7 +6016,7 @@ function attachEventHandlers() {
         const previewImg = document.getElementById('receipt-preview-img') as HTMLImageElement;
         if (previewBox) {
           previewBox.classList.remove('hidden');
-          if (previewImg) previewImg.alt = 'جاري الرفع عبر ImageKit (dttd3hna3)...';
+          if (previewImg) previewImg.alt = 'جاري رفع صورة الإيصال...';
         }
         
         try {
@@ -4641,7 +6024,7 @@ function attachEventHandlers() {
           state.receiptUploadPreview = ikUrl;
           if (previewImg) {
             previewImg.src = ikUrl;
-            previewImg.alt = 'Receipt ImageKit CDN';
+            previewImg.alt = 'صورة الإيصال المرفقة';
           }
         } catch {
           const reader = new FileReader();
@@ -4949,17 +6332,7 @@ function attachEventHandlers() {
       const actionId = (item as HTMLElement).dataset.actionId;
       state.showSearchModal = false;
 
-      if (type === 'quran' && actionId) {
-        const num = parseInt(actionId, 10);
-        const startPage = SURAH_START_PAGE[num] || 1;
-        state.mushafPageNumber = startPage;
-        state.quranMode = 'mushaf';
-        state.mushafPageData = null;
-        state.selectedAyah = null;
-        state.activeSurah = null;
-        localStorage.setItem('zad_last_mushaf_page', startPage.toString());
-        navigateTo('quran');
-      } else if (type === 'dhikr') {
+      if (type === 'dhikr') {
         state.activeAdhkarCategory = actionId || 'morning';
         navigateTo('adhkar');
       } else if (type === 'khutbah') {
@@ -5254,6 +6627,117 @@ function attachEventHandlers() {
       state.isAzanPlaying = false;
       state.activeAzanAlert = null;
       navigateTo('home', 'prayer_adhkar');
+    });
+  }
+
+  // --- Profile Management Modal Handlers ---
+  const openProfileBtns = ['btn-header-profile', 'btn-edit-profile-settings', 'btn-edit-profile-btn'];
+  openProfileBtns.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        audioFx.playAppleSheetOpen();
+        state.showProfileModal = true;
+        state.tempProfilePhoto = state.currentUser?.photoURL || null;
+        state.tempProfileName = state.currentUser?.displayName || '';
+        renderApp();
+      });
+    }
+  });
+
+  const closeProfileBtns = ['btn-close-profile-modal', 'btn-cancel-profile-modal', 'profile-management-modal-overlay'];
+  closeProfileBtns.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('click', (e) => {
+        if (id === 'profile-management-modal-overlay' && e.target !== el) return;
+        audioFx.playAppleSheetClose();
+        state.showProfileModal = false;
+        state.tempProfilePhoto = null;
+        state.tempProfileName = null;
+        renderApp();
+      });
+    }
+  });
+
+  // Upload custom profile image from device
+  const profileFileInput = document.getElementById('profile-avatar-file-input') as HTMLInputElement | null;
+  if (profileFileInput) {
+    profileFileInput.addEventListener('change', async () => {
+      const file = profileFileInput.files?.[0];
+      if (file) {
+        try {
+          const compressedDataUrl = await compressProfileImage(file, 256, 0.85);
+          state.tempProfilePhoto = compressedDataUrl;
+          renderApp();
+        } catch (err: any) {
+          alert(err?.message || 'تعذر معالجة الصورة، يرجى اختيار ملف صورة آخر.');
+        }
+      }
+    });
+  }
+
+  // Select Avatar Preset
+  document.querySelectorAll('.btn-select-avatar-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const uri = (btn as HTMLElement).dataset.presetUri;
+      if (uri) {
+        audioFx.playAppleTap();
+        state.tempProfilePhoto = decodeURIComponent(uri);
+        renderApp();
+      }
+    });
+  });
+
+  // Remove Profile Photo
+  const removePhotoBtn = document.getElementById('btn-remove-profile-photo');
+  if (removePhotoBtn) {
+    removePhotoBtn.addEventListener('click', () => {
+      audioFx.playAppleTap();
+      state.tempProfilePhoto = '';
+      renderApp();
+    });
+  }
+
+  // Save Profile Changes
+  const saveProfileBtn = document.getElementById('btn-save-profile-changes');
+  if (saveProfileBtn) {
+    saveProfileBtn.addEventListener('click', async () => {
+      const current = state.currentUser;
+      if (!current) return;
+
+      const nameInput = document.getElementById('input-profile-display-name') as HTMLInputElement | null;
+      const newName = nameInput ? nameInput.value.trim() : (current.displayName || 'مستخدم كريم');
+      const finalPhoto = state.tempProfilePhoto === '' ? null : (state.tempProfilePhoto !== null ? state.tempProfilePhoto : (current.photoURL || null));
+
+      audioFx.playAppleTap();
+      triggerHapticFeedback(20);
+
+      // Update current state user
+      const updatedUser: CustomAppUser = {
+        ...current,
+        uid: current.uid,
+        displayName: newName || 'مستخدم كريم',
+        photoURL: finalPhoto
+      };
+      state.currentUser = updatedUser;
+
+      // Save to localStorage for persistent local session
+      const LOCAL_USER_KEY = 'zad_custom_local_user';
+      localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(updatedUser));
+
+      // Record in managed users & account memory
+      recordUserSession(updatedUser);
+      const userKey = getUserStorageKey(updatedUser);
+      saveUserMemory(userKey, {
+        lastUpdated: new Date().toISOString()
+      });
+
+      state.showProfileModal = false;
+      state.tempProfilePhoto = null;
+      state.tempProfileName = null;
+      renderApp();
     });
   }
 

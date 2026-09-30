@@ -1,10 +1,16 @@
 /**
- * نظام الاشتراك والباقة وإدارة المسؤول (مالك عبدالودود) لتطبيق زاد المسلم
- * الدفع عبر فودافون كاش على الرقم +201114809908 والتواصل عبر واتساب
+ * نظام الاشتراك والباقة وإدارة المسؤول (مالك عبدالودود) لتطبيق اذكار ، Ankara
+ * الدفع عبر تطبيق انستاباي (InstaPay) على الرقم المصري +201114809908 والتواصل عبر واتساب
  */
 
-export const VODAFONE_CASH_NUMBER = "+201114809908";
-export const VODAFONE_CASH_LOCAL_NUMBER = "01114809908";
+export const INSTAPAY_NUMBER = "+201114809908";
+export const INSTAPAY_LOCAL_NUMBER = "01114809908";
+export const INSTAPAY_IPA = "01114809908@instapay";
+
+// Aliases for full compatibility
+export const VODAFONE_CASH_NUMBER = INSTAPAY_NUMBER;
+export const VODAFONE_CASH_LOCAL_NUMBER = INSTAPAY_LOCAL_NUMBER;
+
 export const ADMIN_EMAIL = "malek2013vscode@gmail.com";
 export const SUBSCRIPTION_PRICE_EGP = 100;
 
@@ -324,7 +330,7 @@ export function getManagedUsers(): ManagedUser[] {
         uid: 'admin_malek',
         email: ADMIN_EMAIL,
         displayName: 'مالك عبدالودود (المسؤول)',
-        photoURL: '/images/app_logo.jpg',
+        photoURL: null,
         isBanned: false,
         isSubscribed: true,
         status: 'admin',
@@ -444,6 +450,6 @@ export function generateWhatsAppPaymentUrl(
     if (userOrName.email) email = ` (${userOrName.email})`;
   }
 
-  const text = `السلام عليكم ورحمة الله،\nلقد قمت بتحويل مبلغ الاشتراك (100 جنيه مصري) عبر فودافون كاش لرقم المحفظة ${VODAFONE_CASH_LOCAL_NUMBER}.\nاسم المشترك: ${name}${email}\nيرجى مراجعة إيصال التحويل المرفق وتفعيل الحساب.\nشكراً جزيلاً.`;
+  const text = `السلام عليكم ورحمة الله،\nلقد قمت بتحويل مبلغ الاشتراك (100 جنيه مصري) عبر تطبيق انستاباي (InstaPay) للرقم المصري ${INSTAPAY_LOCAL_NUMBER} (${INSTAPAY_NUMBER}).\nاسم المشترك: ${name}${email}\nيرجى مراجعة إيصال التحويل وتفعيل الحساب.\nشكراً جزيلاً.`;
   return `https://wa.me/201114809908?text=${encodeURIComponent(text)}`;
 }

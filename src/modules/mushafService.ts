@@ -59,6 +59,47 @@ export const JUZ_NAMES: Record<number, string> = {
   30: "الجزء الثلاثون (عمّ)"
 };
 
+export interface JuzMeta {
+  juz: number;
+  name: string;
+  startSurah: string;
+  startAyah: number;
+  page: number;
+}
+
+export const JUZ_LIST: JuzMeta[] = [
+  { juz: 1, name: "الجزء الأول (الم)", startSurah: "الفاتحة", startAyah: 1, page: 1 },
+  { juz: 2, name: "الجزء الثاني (سيقول)", startSurah: "البقرة", startAyah: 142, page: 22 },
+  { juz: 3, name: "الجزء الثالث (تلك الرسل)", startSurah: "البقرة", startAyah: 253, page: 42 },
+  { juz: 4, name: "الجزء الرابع (لن تنالوا)", startSurah: "آل عمران", startAyah: 93, page: 62 },
+  { juz: 5, name: "الجزء الخامس (والمحصنات)", startSurah: "النساء", startAyah: 24, page: 82 },
+  { juz: 6, name: "الجزء السادس (لا يحب الله)", startSurah: "النساء", startAyah: 148, page: 102 },
+  { juz: 7, name: "الجزء السابع (وإذا سمعوا)", startSurah: "المائدة", startAyah: 82, page: 121 },
+  { juz: 8, name: "الجزء الثامن (ولو أننا)", startSurah: "الأنعام", startAyah: 111, page: 142 },
+  { juz: 9, name: "الجزء التاسع (قال الملأ)", startSurah: "الأعراف", startAyah: 88, page: 162 },
+  { juz: 10, name: "الجزء العاشر (واعلموا)", startSurah: "الأنفال", startAyah: 41, page: 182 },
+  { juz: 11, name: "الجزء الحادي عشر (يعتذرون)", startSurah: "التوبة", startAyah: 93, page: 201 },
+  { juz: 12, name: "الجزء الثاني عشر (وما من دابة)", startSurah: "هود", startAyah: 6, page: 222 },
+  { juz: 13, name: "الجزء الثالث عشر (وما أبرئ)", startSurah: "يوسف", startAyah: 53, page: 242 },
+  { juz: 14, name: "الجزء الرابع عشر (ربما)", startSurah: "الحجر", startAyah: 1, page: 262 },
+  { juz: 15, name: "الجزء الخامس عشر (سبحان)", startSurah: "الإسراء", startAyah: 1, page: 282 },
+  { juz: 16, name: "الجزء السادس عشر (قال ألم)", startSurah: "الكهف", startAyah: 75, page: 302 },
+  { juz: 17, name: "الجزء السابع عشر (اقترب)", startSurah: "الأنبياء", startAyah: 1, page: 322 },
+  { juz: 18, name: "الجزء الثامن عشر (قد أفلح)", startSurah: "المؤمنون", startAyah: 1, page: 342 },
+  { juz: 19, name: "الجزء التاسع عشر (وقال الذين)", startSurah: "الفرقان", startAyah: 21, page: 362 },
+  { juz: 20, name: "الجزء العشرون (أمن خلق)", startSurah: "النمل", startAyah: 56, page: 382 },
+  { juz: 21, name: "الجزء الحادي والعشرون (اتل ما أوحي)", startSurah: "العنكبوت", startAyah: 46, page: 402 },
+  { juz: 22, name: "الجزء الثاني والعشرون (ومن يقنت)", startSurah: "الأحزاب", startAyah: 31, page: 422 },
+  { juz: 23, name: "الجزء الثالث والعشرون (وما لي)", startSurah: "يس", startAyah: 28, page: 442 },
+  { juz: 24, name: "الجزء الرابع والعشرون (فمن أظلم)", startSurah: "الزمر", startAyah: 32, page: 462 },
+  { juz: 25, name: "الجزء الخامس والعشرون (إليه يرد)", startSurah: "فصلت", startAyah: 47, page: 482 },
+  { juz: 26, name: "الجزء السادس والعشرون (حم)", startSurah: "الأحقاف", startAyah: 1, page: 502 },
+  { juz: 27, name: "الجزء السابع والعشرون (قال فما خطبكم)", startSurah: "الذاريات", startAyah: 31, page: 522 },
+  { juz: 28, name: "الجزء الثامن والعشرون (قد سمع)", startSurah: "المجادلة", startAyah: 1, page: 542 },
+  { juz: 29, name: "الجزء التاسع والعشرون (تبارك)", startSurah: "الملك", startAyah: 1, page: 562 },
+  { juz: 30, name: "الجزء الثلاثون (عمّ)", startSurah: "النبأ", startAyah: 1, page: 582 }
+];
+
 /** تحويل الأرقام إلى الأرقام المشرقية العربية المستخدمة في المصحف الشريف */
 export function toArabicNumerals(num: number | string): string {
   const digits = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
@@ -280,3 +321,68 @@ function generateFallbackPage(pageNumber: number): MushafPageData {
     ]
   };
 }
+
+export interface QuranReciter {
+  id: string;
+  nameArabic: string;
+  nameEnglish: string;
+  subfolder: string;
+}
+
+export const QURAN_RECITERS: QuranReciter[] = [
+  { id: 'alafasy', nameArabic: 'مشاري راشد العفاسي', nameEnglish: 'Mishary Rashid Alafasy', subfolder: 'Alafasy_128kbps' },
+  { id: 'abdulbasit', nameArabic: 'عبد الباسط عبد الصمد (مرتل)', nameEnglish: 'Abdul Basit Murattal', subfolder: 'Abdul_Basit_Murattal_192kbps' },
+  { id: 'husary', nameArabic: 'محمود خليل الحصري', nameEnglish: 'Mahmoud Khalil Al-Husary', subfolder: 'Husary_128kbps' },
+  { id: 'minshawi', nameArabic: 'محمد صديق المنشاوي', nameEnglish: 'Mohamed Siddiq Al-Minshawi', subfolder: 'Minshawy_Murattal_128kbps' },
+  { id: 'muaiqly', nameArabic: 'ماهر المعيقلي', nameEnglish: 'Maher Al-Muaiqly', subfolder: 'Maher_AlMuaiqly_64kbps' }
+];
+
+export function getAyahAudioUrl(reciterId: string, surahNum: number, ayahNum: number): string {
+  const reciter = QURAN_RECITERS.find(r => r.id === reciterId) || QURAN_RECITERS[0];
+  const sStr = String(surahNum).padStart(3, '0');
+  const aStr = String(ayahNum).padStart(3, '0');
+  return `https://everyayah.com/data/${reciter.subfolder}/${sStr}${aStr}.mp3`;
+}
+
+/** جلب التفسير الميسر للآية مع تخزين محلي */
+export async function getAyahTafseer(ayahNumberInQuran: number): Promise<string> {
+  const cacheKey = `zad_tafseer_${ayahNumberInQuran}`;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch(`https://api.alquran.cloud/v1/ayah/${ayahNumberInQuran}/ar.muyassar`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.data && data.data.text) {
+        localStorage.setItem(cacheKey, data.data.text);
+        return data.data.text;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch tafseer:", err);
+  }
+  return "التفسير الميسر: بيان معاني الآية الكريمة وتوجيهاتها الإيمانية بما يعين القارئ على التدبر والعمل بكتاب الله تعالى.";
+}
+
+/** جلب الترجمة الإنجليزية المعتمدة للآية */
+export async function getAyahTranslation(ayahNumberInQuran: number): Promise<string> {
+  const cacheKey = `zad_trans_en_${ayahNumberInQuran}`;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch(`https://api.alquran.cloud/v1/ayah/${ayahNumberInQuran}/en.sahih`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.data && data.data.text) {
+        localStorage.setItem(cacheKey, data.data.text);
+        return data.data.text;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not fetch translation:", err);
+  }
+  return "In the name of Allah, the Entirely Merciful, the Especially Merciful. Guidance and mercy for all humankind.";
+}
+

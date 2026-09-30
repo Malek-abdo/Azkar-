@@ -3,7 +3,6 @@
  * مع تطبيع الحروف العربية (إزالة التشكيل وتوحيد الألف والياء والتاء المربوطة)
  */
 
-import { SURAH_LIST } from "../data/quranData.ts";
 import { ALL_ADHKAR } from "../data/adhkarData.ts";
 import { ALL_KHUTBAHS } from "../data/khutbahData.ts";
 import { PRAYER_GUIDE_STEPS } from "../data/prayerGuideData.ts";
@@ -12,7 +11,7 @@ import { FEAR_HOPE_CONTENT } from "../data/fearHopeData.ts";
 
 export interface SearchResult {
   id: string;
-  type: "quran" | "dhikr" | "khutbah" | "prayer_guide" | "faith" | "fear_hope";
+  type: "dhikr" | "khutbah" | "prayer_guide" | "faith" | "fear_hope";
   typeLabel: string;
   title: string;
   snippet: string;
@@ -42,23 +41,7 @@ export function performGlobalSearch(query: string): SearchResult[] {
 
   const results: SearchResult[] = [];
 
-  // 1. Search Surahs
-  for (const surah of SURAH_LIST) {
-    const normName = normalizeArabic(surah.name);
-    if (normName.includes(normQuery) || surah.number.toString() === query.trim()) {
-      results.push({
-        id: `surah_${surah.number}`,
-        type: "quran",
-        typeLabel: "القرآن الكريم",
-        title: `سورة ${surah.name}`,
-        snippet: `${surah.revelationTypeArabic} · ${surah.numberOfAyahs} آيات · الجزء ${surah.juz}`,
-        source: "تنزيل Tanzil.net",
-        actionId: surah.number.toString()
-      });
-    }
-  }
-
-  // 2. Search Adhkar
+  // 1. Search Adhkar
   for (const dhikr of ALL_ADHKAR) {
     const normText = normalizeArabic(dhikr.text);
     const normCat = normalizeArabic(dhikr.categoryName);

@@ -159,7 +159,7 @@ export function calculateOfflinePrayers(lat: number, lng: number, date: Date = n
   const remH = Math.floor(remainingMs / (1000 * 60 * 60));
   const remM = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
   const remS = Math.floor((remainingMs % (1000 * 60)) / 1000);
-  const remainingFormatted = `${remH} س و ${remM} د و ${remS} ث`;
+  const remainingFormatted = `${String(remH).padStart(2, '0')}:${String(remM).padStart(2, '0')}:${String(remS).padStart(2, '0')}`;
 
   // Gregorian date in Arabic
   const gregorianFormatter = new Intl.DateTimeFormat('ar-EG', {

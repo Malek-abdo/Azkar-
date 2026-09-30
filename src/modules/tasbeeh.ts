@@ -12,6 +12,14 @@ export interface TasbeehState {
   soundEnabled: boolean;
 }
 
+export interface DhikrDailyStats {
+  todayCount: number;
+  todayDate: string;
+  weeklyCount: number;
+  streakDays: number;
+  history: Record<string, number>; // date "YYYY-MM-DD" -> count
+}
+
 export const TASBEEH_PRESETS = [
   "سُبْحَانَ اللَّهِ",
   "الْحَمْدُ لِلَّهِ",
@@ -26,6 +34,58 @@ export const TASBEEH_PRESETS = [
 export const TARGET_PRESETS = [33, 99, 100, 1000, 0]; // 0 means open/unlimited
 
 const STORAGE_KEY = "zad_tasbeeh_state";
+const STORAGE_STATS_KEY = "zad_tasbeeh_daily_stats";
+
+export function loadTasbeehStats(): DhikrDailyStats {
+  const today = new Date().toISOString().slice(0, 10);
+  const defaultStats: DhikrDailyStats = {
+    todayCount: 0,
+    todayDate: today,
+    weeklyCount: 0,
+    streakDays: 1,
+    history: {}
+  };
+
+  const saved = localStorage.getItem(STORAGE_STATS_KEY);
+  if (!saved) return defaultStats;
+
+  try {
+    const parsed = JSON.parse(saved);
+    if (parsed.todayDate !== today) {
+      // New day: archive yesterday
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      const hadYesterday = (parsed.history && parsed.history[yesterday]) || parsed.todayCount > 0;
+      const newStreak = hadYesterday ? (parsed.streakDays || 1) + 1 : 1;
+      
+      parsed.history = parsed.history || {};
+      parsed.history[parsed.todayDate] = parsed.todayCount;
+      parsed.todayDate = today;
+      parsed.todayCount = 0;
+      parsed.streakDays = newStreak;
+    }
+    
+    // Calculate weekly sum (last 7 days)
+    let weekly = parsed.todayCount || 0;
+    for (let i = 1; i <= 6; i++) {
+      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      weekly += (parsed.history && parsed.history[d]) || 0;
+    }
+    parsed.weeklyCount = weekly;
+
+    return parsed;
+  } catch {
+    return defaultStats;
+  }
+}
+
+export function recordTasbeehIncrement(): DhikrDailyStats {
+  const stats = loadTasbeehStats();
+  stats.todayCount += 1;
+  stats.weeklyCount += 1;
+  stats.history[stats.todayDate] = stats.todayCount;
+  localStorage.setItem(STORAGE_STATS_KEY, JSON.stringify(stats));
+  return stats;
+}
 
 export function loadTasbeehState(): TasbeehState {
   const saved = localStorage.getItem(STORAGE_KEY);

@@ -1,6 +1,6 @@
 {
   "name": "اذكار ، Ankara",
-  "description": "تطبيق اذكار ، Ankara - رفيقك اليومي للقرآن والذكر ومواقيت الصلاة والعبادة",
+  "description": "تطبيق اذكار ، Ankara - رفيقك اليومي للأذكار النبوية والمسبحة الذكية ومواقيت الصلاة والعبادة",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

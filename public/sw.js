@@ -1,6 +1,6 @@
 // Service Worker for اذكار ، Ankara - زاد المسلم
-const CACHE_NAME = 'adhkar-ankara-v4';
-const ASSETS_TO_CACHE = [
+const CACHE_NAME = 'adhkar-ankara-pwa-v5';
+const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
@@ -20,7 +20,9 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE).catch(() => {});
+      return cache.addAll(STATIC_ASSETS).catch((err) => {
+        console.warn('Some assets could not be pre-cached:', err);
+      });
     })
   );
 });
@@ -35,17 +37,35 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Network-first for HTML and scripts, stale-while-revalidate for images
+// Cache strategies: Network-first for app shell, Stale-while-revalidate for Quran API & Fonts, Cache-first for images
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // If cross-origin or iframe (e.g. tanzil.net), let browser handle normally
+  // 1. Quran Cloud API & Fonts: Cache-First with Network Background Revalidation for offline support
+  if (url.hostname.includes('alquran.cloud') || url.hostname.includes('fonts.gstatic.com') || url.hostname.includes('fonts.googleapis.com')) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) => {
+        return cache.match(event.request).then((cachedResponse) => {
+          const fetchPromise = fetch(event.request).then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          }).catch(() => cachedResponse);
+          return cachedResponse || fetchPromise;
+        });
+      })
+    );
+    return;
+  }
+
+  // 2. Ignore other cross-origin audio / streams (e.g. everyayah mp3s) to prevent large storage bloat
   if (url.origin !== self.origin) {
     return;
   }
 
-  // Network first for documents and scripts
+  // 3. Navigation and scripts: Network First with Cache Fallback
   if (event.request.mode === 'navigate' || event.request.destination === 'script' || event.request.destination === 'document') {
     event.respondWith(
       fetch(event.request).then((networkResponse) => {
@@ -55,13 +75,13 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       }).catch(() => {
-        return caches.match(event.request).then(cached => cached || caches.match('/'));
+        return caches.match(event.request).then(cached => cached || caches.match('/index.html') || caches.match('/'));
       })
     );
     return;
   }
 
-  // Cache first with network fallback for images and static assets
+  // 4. Static images and icons: Cache First with Network Fallback
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {

@@ -141,6 +141,43 @@ let currentAudio: HTMLAudioElement | null = null;
 let currentSynthStopFn: (() => void) | null = null;
 let isAudioPlaying = false;
 let activeAlertState: AlertTriggerInfo | null = null;
+let isAudioEngineUnlocked = false;
+
+// Pre-unlock AudioContext and HTMLAudio on user interaction
+export function unlockAudioEngine(): void {
+  if (isAudioEngineUnlocked) return;
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioCtx) {
+      const ctx = new AudioCtx();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      // Create and play a silent buffer
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start(0);
+      setTimeout(() => {
+        ctx.close().catch(() => {});
+      }, 100);
+    }
+    isAudioEngineUnlocked = true;
+  } catch (e) {
+    // ignore
+  }
+}
+
+// Global click/touch listener to unlock audio engine automatically
+if (typeof window !== 'undefined') {
+  const unlockEvents = ['pointerdown', 'touchstart', 'click', 'keydown'];
+  const handleUnlock = () => {
+    unlockAudioEngine();
+    unlockEvents.forEach(evt => window.removeEventListener(evt, handleUnlock));
+  };
+  unlockEvents.forEach(evt => window.addEventListener(evt, handleUnlock, { passive: true, once: true }));
+}
 
 // Load settings from storage
 export function loadPrayerAlertsSettings(): PrayerAlertsSettings {
