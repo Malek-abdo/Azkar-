@@ -110,6 +110,10 @@ import {
   compressProfileImage 
 } from './modules/profileManager.ts';
 import { unlockAudioEngine } from './modules/prayerAlerts.ts';
+import appLogo from './assets/images/islamic_minimal_icon_1790783471439.jpg';
+
+// Certified resilient App Logo URL (uses Vite-bundled asset with static public fallback)
+const APP_LOGO_SRC: string = appLogo || '/images/app_logo.jpg';
 
 // State Management
 interface AppState {
@@ -512,7 +516,7 @@ export function renderApp() {
         <div class="space-y-4 max-w-xs">
             <div class="relative w-24 h-24 mx-auto">
               <div class="w-24 h-24 rounded-3xl p-1 bg-gradient-to-tr from-emerald-800 via-emerald-600 to-amber-500 shadow-2xl flex items-center justify-center">
-                <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[20px] object-cover" />
+                <img src="${APP_LOGO_SRC}" alt="Logo" onerror="this.onerror=null;this.src='/images/app_logo.jpg';" class="w-full h-full rounded-[20px] object-cover" />
               </div>
               <div class="absolute -bottom-2 -right-2 w-7 h-7 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center shadow-lg text-xs font-black">
                 ۞
@@ -582,7 +586,7 @@ export function renderApp() {
         <!-- Right: App Logo & Brand -->
         <div class="flex items-center gap-2.5 cursor-pointer select-none min-w-0" id="header-brand">
           <div class="w-9 h-9 rounded-xl p-0.5 bg-gradient-to-tr from-emerald-800 via-emerald-600 to-amber-400 shadow-sm flex items-center justify-center shrink-0">
-            <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[10px] object-cover" />
+            <img src="${APP_LOGO_SRC}" alt="Logo" onerror="this.onerror=null;this.src='/images/app_logo.jpg';" class="w-full h-full rounded-[10px] object-cover" />
           </div>
           <div class="text-right min-w-0">
             <h1 class="text-sm sm:text-base font-bold text-primary flex items-center gap-1.5 leading-tight truncate">
@@ -1143,7 +1147,7 @@ function renderMandatoryAuthScreen(): string {
       <div class="text-center pt-6 pb-2 space-y-3">
         <div class="relative inline-block">
           <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl p-1 bg-gradient-to-tr from-emerald-800 via-emerald-600 to-amber-400 mx-auto shadow-2xl flex items-center justify-center">
-            <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[14px] object-cover" />
+            <img src="${APP_LOGO_SRC}" alt="Logo" onerror="this.onerror=null;this.src='/images/app_logo.jpg';" class="w-full h-full rounded-[14px] object-cover" />
           </div>
           <div class="absolute -bottom-1.5 -right-1.5 bg-emerald-600 text-white rounded-full p-1 shadow-md">
             ${ICONS.sparkles('w-3.5 h-3.5')}
@@ -3490,7 +3494,7 @@ function renderMoreView(): string {
       <!-- App Info & Supervisor Card -->
       <div class="card-luxury p-4 text-center space-y-2">
         <div class="w-14 h-14 rounded-xl p-0.5 bg-gradient-to-tr from-emerald-800 to-amber-400 mx-auto shadow-md">
-          <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[10px] object-cover" />
+          <img src="${APP_LOGO_SRC}" alt="Logo" onerror="this.onerror=null;this.src='/images/app_logo.jpg';" class="w-full h-full rounded-[10px] object-cover" />
         </div>
         <h3 class="font-semibold text-xs sm:text-sm text-obsidian flex items-center justify-center gap-1.5">
           <span>تطبيق اذكار ، Ankara</span>
@@ -3637,7 +3641,7 @@ function renderPaywallModal(): string {
         <div class="flex items-center justify-between pb-3 border-b border-hairline">
           <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-xl p-0.5 bg-gradient-to-tr from-emerald-800 to-amber-400 shrink-0 shadow-sm">
-              <img src="/src/assets/images/islamic_minimal_icon_1790783471439.jpg" alt="Logo" class="w-full h-full rounded-[8px] object-cover" />
+              <img src="${APP_LOGO_SRC}" alt="Logo" onerror="this.onerror=null;this.src='/images/app_logo.jpg';" class="w-full h-full rounded-[8px] object-cover" />
             </div>
             <div>
               <h3 class="font-semibold text-sm sm:text-base text-obsidian">الاشتراك عبر InstaPay</h3>
