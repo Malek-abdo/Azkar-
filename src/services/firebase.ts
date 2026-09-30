@@ -90,16 +90,24 @@ export async function loginWithGoogle(): Promise<CustomAppUser> {
     localStorage.removeItem(LOCAL_USER_KEY);
     return {
       uid: result.user.uid,
-      displayName: result.user.displayName || 'مستخدم كريم',
+      displayName: result.user.displayName || result.user.email?.split('@')[0] || 'مستخدم كريم',
       email: result.user.email,
       photoURL: result.user.photoURL || null,
       isLocalSession: false
     };
   } catch (error: any) {
-    console.warn('Google sign-in constraint handled:', error);
-    // Graceful fallback for popup blockers / iframe sandbox
-    const fallbackUser = loginWithLocalSession('مالك عبدالودود', 'malek2013vscode@gmail.com');
-    return fallbackUser;
+    console.error('Google sign-in error:', error);
+    const code = error?.code;
+    if (code === 'auth/popup-closed-by-user') {
+      throw new Error('تم إغلاق نافذة تسجيل الدخول عبر Google من قِبل المستخدم.');
+    } else if (code === 'auth/popup-blocked') {
+      throw new Error('تم حظر النافذة المنبثقة من قِبل المتصفح. يرجى السماح بالنوافذ المنبثقة أو الدخول بالبريد وكلمة المرور.');
+    } else if (code === 'auth/cancelled-popup-request') {
+      throw new Error('تم إلغاء طلب تسجيل الدخول.');
+    } else if (code === 'auth/network-request-failed') {
+      throw new Error('فشل الاتصال بالإنترنت أثناء تسجيل الدخول.');
+    }
+    throw new Error(error?.message || 'تعذر تسجيل الدخول عبر Google. يرجى الدخول أو إنشاء حساب بالبريد وكلمة المرور.');
   }
 }
 
@@ -124,12 +132,6 @@ export async function registerWithEmailPassword(name: string, email: string, pas
       });
     }
 
-    saveLocalAccount({
-      name: cleanName,
-      email: cleanEmail,
-      createdAt: new Date().toISOString()
-    });
-
     localStorage.removeItem(LOCAL_USER_KEY);
 
     return {
@@ -140,7 +142,7 @@ export async function registerWithEmailPassword(name: string, email: string, pas
       isLocalSession: false
     };
   } catch (error: any) {
-    console.warn('Email registration API fallback check:', error);
+    console.error('Email registration error:', error);
     const code = error?.code;
     if (code === 'auth/email-already-in-use') {
       throw new Error('هذا البريد الإلكتروني مسجل بالفعل مسبقاً. يمكنك تسجيل الدخول مباشرة.');
@@ -148,15 +150,10 @@ export async function registerWithEmailPassword(name: string, email: string, pas
       throw new Error('صيغة البريد الإلكتروني غير صحيحة.');
     } else if (code === 'auth/weak-password') {
       throw new Error('كلمة المرور ضعيفة جداً، يرجى اختيار كلمة مرور أقوى.');
+    } else if (code === 'auth/network-request-failed') {
+      throw new Error('تعذر الاتصال بالشبكة، يرجى التحقق من اتصالك بالإنترنت.');
     }
-
-    // If there is an environment network/auth restriction or blocked domain, create account smoothly
-    saveLocalAccount({
-      name: cleanName,
-      email: cleanEmail,
-      createdAt: new Date().toISOString()
-    });
-    return loginWithLocalSession(cleanName, cleanEmail);
+    throw new Error(error?.message || 'حدث خطأ أثناء إنشاء الحساب. يرجى المحاولة مرة أخرى.');
   }
 }
 
@@ -179,25 +176,20 @@ export async function loginWithEmailPassword(email: string, pass: string): Promi
       isLocalSession: false
     };
   } catch (error: any) {
-    console.warn('Email sign-in API fallback check:', error);
+    console.error('Email sign-in error:', error);
     const code = error?.code;
     if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
-      // Check if user has a stored account locally
-      const savedAccounts = getStoredLocalAccounts();
-      const existing = savedAccounts.find(a => a.email === cleanEmail);
-      if (existing) {
-        return loginWithLocalSession(existing.name, existing.email);
-      }
-      throw new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة');
+      throw new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة.');
     } else if (code === 'auth/invalid-email') {
-      throw new Error('صيغة البريد الإلكتروني غير صالحة');
+      throw new Error('صيغة البريد الإلكتروني غير صالحة.');
+    } else if (code === 'auth/user-disabled') {
+      throw new Error('تم تعطيل هذا الحساب. يرجى التواصل مع الإدارة.');
+    } else if (code === 'auth/too-many-requests') {
+      throw new Error('تم حظر المحاولات مؤقتاً لكثرة المحاولات الخاطئة. يرجى المحاولة لاحقاً أو استعادة كلمة المرور.');
+    } else if (code === 'auth/network-request-failed') {
+      throw new Error('تعذر الاتصال بالشبكة، يرجى التحقق من اتصالك بالإنترنت.');
     }
-
-    // Default seamless fallback if domain whitelist or network occurs
-    const localAccounts = getStoredLocalAccounts();
-    const existing = localAccounts.find(a => a.email === cleanEmail);
-    const name = existing ? existing.name : cleanEmail.split('@')[0];
-    return loginWithLocalSession(name, cleanEmail);
+    throw new Error(error?.message || 'البريد الإلكتروني أو كلمة المرور غير صحيحة.');
   }
 }
 
@@ -221,8 +213,8 @@ export async function resetUserPassword(email: string): Promise<void> {
   }
 }
 
-// Local Session Setup
-export function loginWithLocalSession(displayName = 'مالك عبدالودود', email = 'malek2013vscode@gmail.com'): CustomAppUser {
+// Local Session Setup (Only for explicit local testing if requested)
+export function loginWithLocalSession(displayName = 'مستخدم', email = 'user@example.com'): CustomAppUser {
   const user: CustomAppUser = {
     uid: 'user_session_' + btoa(email || 'user').replace(/=/g, ''),
     displayName: displayName || email.split('@')[0],
@@ -239,6 +231,11 @@ export function getSavedLocalUser(): CustomAppUser | null {
   if (saved) {
     try {
       const u = JSON.parse(saved);
+      // Clean up legacy malek quick login sessions so it requires real sign in
+      if (u && (u.email === 'malek2013vscode@gmail.com' && u.isLocalSession)) {
+        localStorage.removeItem(LOCAL_USER_KEY);
+        return null;
+      }
       if (u && typeof u.photoURL === 'string' && (u.photoURL.includes('app_logo') || u.photoURL.includes('islamic_app_icon') || u.photoURL.includes('islamic_minimal_icon'))) {
         u.photoURL = null;
       }

@@ -79,7 +79,6 @@ import {
   loginWithEmailPassword,
   registerWithEmailPassword,
   resetUserPassword,
-  loginWithLocalSession,
   logoutUser, 
   subscribeToAuth, 
   type CustomAppUser 
@@ -300,26 +299,13 @@ function checkUrlAuthPayload() {
   }
 }
 
-// Post-login redirect handler (redirects to primary dev URL if logged in from another host)
+// Post-login redirect handler
 export function handlePostLoginRedirect(user: CustomAppUser) {
   state.currentUser = user;
   state.isSigningIn = false;
   state.authError = null;
   state.authErrorCode = null;
-
-  if (typeof window !== 'undefined') {
-    if (window.location.hostname !== PRIMARY_DEV_HOST) {
-      try {
-        const payload = btoa(unescape(encodeURIComponent(JSON.stringify(user))));
-        const redirectUrl = `${PRIMARY_DEV_URL}?auth_user=${payload}`;
-        window.location.href = redirectUrl;
-        return;
-      } catch {
-        window.location.href = PRIMARY_DEV_URL;
-        return;
-      }
-    }
-  }
+  applyUserAccountMemory(user);
   renderApp();
 }
 
@@ -388,8 +374,15 @@ subscribeToAuth((user) => {
     const savedLocal = localStorage.getItem('zad_local_authenticated_user');
     if (savedLocal) {
       try {
-        state.currentUser = JSON.parse(savedLocal);
-        applyUserAccountMemory(state.currentUser);
+        const parsed = JSON.parse(savedLocal);
+        // Clear out legacy fake Malek local session so user undergoes real authentication
+        if (parsed && parsed.isLocalSession && parsed.email === 'malek2013vscode@gmail.com') {
+          localStorage.removeItem('zad_local_authenticated_user');
+          state.currentUser = null;
+        } else {
+          state.currentUser = parsed;
+          applyUserAccountMemory(state.currentUser);
+        }
       } catch {
         // ignore
       }
@@ -1363,12 +1356,12 @@ function renderMandatoryAuthScreen(): string {
         <!-- Divider -->
         <div class="relative flex py-1 items-center">
           <div class="flex-grow border-t border-subtle"></div>
-          <span class="flex-shrink mx-3 text-muted text-[11px] font-medium">أو المتابعة السريعة</span>
+          <span class="flex-shrink mx-3 text-muted text-[11px] font-medium">أو المتابعة عبر</span>
           <div class="flex-grow border-t border-subtle"></div>
         </div>
 
         <!-- Alternate Login Actions -->
-        <div class="space-y-2">
+        <div>
           <button 
             type="button"
             id="btn-google-login-action" 
@@ -1377,16 +1370,6 @@ function renderMandatoryAuthScreen(): string {
           >
             <span class="w-4 h-4 flex items-center justify-center">${ICONS.google('w-4 h-4')}</span>
             <span>تسجيل الدخول عبر Google</span>
-          </button>
-
-          <!-- Instant Developer/Demo Mode (Never blocked) -->
-          <button 
-            type="button"
-            id="btn-demo-login-action" 
-            class="w-full py-2 px-3 bg-gold/10 hover:bg-gold/20 border border-gold/30 rounded-xl text-[11px] font-bold text-gold-dark dark:text-gold flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95"
-          >
-            ${ICONS.bolt('w-3.5 h-3.5')}
-            <span>دخول فوري سريع بحساب مالك عبدالودود</span>
           </button>
         </div>
 
@@ -4942,18 +4925,9 @@ function attachEventHandlers() {
       } catch (err: any) {
         state.isSigningIn = false;
         state.authErrorCode = err?.code || null;
-        state.authError = err?.message || 'تعذر تسجيل الدخول عبر Google. يمكنك الدخول بالبريد أو الدخول الفوري.';
+        state.authError = err?.message || 'تعذر تسجيل الدخول عبر Google. يمكنك الدخول بالبريد وكلمة المرور.';
         renderApp();
       }
-    });
-  }
-
-  // Instant Demo / Developer Login
-  const demoLoginBtn = document.getElementById('btn-demo-login-action');
-  if (demoLoginBtn) {
-    demoLoginBtn.addEventListener('click', () => {
-      const user = loginWithLocalSession('مالك عبدالودود', 'malek2013vscode@gmail.com');
-      handlePostLoginRedirect(user);
     });
   }
 
